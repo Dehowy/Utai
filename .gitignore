@@ -1,0 +1,89 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+dist/
+build/
+.eggs/
+*.whl
+
+# Node.js
+node_modules/
+app/frontend/dist/
+
+# Built frontend served by backend
+app/backend/static/*
+!app/backend/static/.gitkeep
+
+# Temp and output files
+app/temp/
+app/output/
+
+# Built Electron app (entire portable bundle)
+Utai/
+
+# External tools (bundled, not source-managed)
+# ffmpeg / ffprobe binaries (anywhere in tree)
+**/ffmpeg.exe
+**/ffprobe.exe
+bin/*.dll
+
+# yt-dlp source (cloned separately)
+yt-dlp/
+
+# MSST
+# MSST virtual environment
+MSST/.venv/
+
+# Downloaded separation models (users download their own)
+MSST/pretrain/vocal_models/*.ckpt
+MSST/pretrain/vocal_models/*.pth
+MSST/pretrain/vocal_models/*.th
+MSST/pretrain/multi_stem_models/*.ckpt
+MSST/pretrain/multi_stem_models/*.pth
+MSST/pretrain/multi_stem_models/*.th
+MSST/pretrain/single_stem_models/*.ckpt
+MSST/pretrain/single_stem_models/*.pth
+MSST/pretrain/single_stem_models/*.th
+MSST/pretrain/VR_Models/*.pth
+MSST/tmpdir/
+
+# RVC
+# User-trained models and training data
+RVC/*/assets/weights/*.pth
+RVC/*/assets/indices/*.index
+RVC/*/logs/
+!RVC/*/logs/mute/
+
+# Pretrained base models (large, downloaded separately)
+RVC/**/assets/pretrained/*.pth
+RVC/**/assets/pretrained_v2/*.pth
+RVC/**/assets/hubert/*.pt
+RVC/**/assets/hubert/*.pth
+RVC/**/assets/rmvpe/*.pt
+RVC/**/assets/rmvpe/*.pth
+RVC/**/assets/rmvpe/*.onnx
+RVC/**/assets/*.pth
+
+# Electron
+electron/node_modules/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.claude/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+ehthumbs.db
+
+# Environment / Secrets
+.env
+.env.*
+*.log

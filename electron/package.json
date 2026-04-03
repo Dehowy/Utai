@@ -1,0 +1,47 @@
+{
+  "name": "utai",
+  "version": "0.1.0",
+  "description": "AI Voice Conversion Workstation",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --dir",
+    "build:installer": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.2"
+  },
+  "build": {
+    "appId": "com.utai.app",
+    "productName": "Utai",
+    "directories": {
+      "output": "../Utai/electron-out"
+    },
+    "win": {
+      "target": "dir",
+      "icon": "build/icon.png"
+    },
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "loading.html"
+    ],
+    "fileAssociations": [
+      {
+        "ext": "utai",
+        "name": "Utai Project",
+        "description": "Utai Audio Workflow Project",
+        "role": "Editor"
+      },
+      {
+        "ext": "utaiTr",
+        "name": "Utai Training Project",
+        "description": "Utai Training Project",
+        "role": "Editor"
+      }
+    ]
+  }
+}

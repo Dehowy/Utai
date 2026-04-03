@@ -1,0 +1,5 @@
+# PyTorch with CUDA 12.1 - supports RTX 30/40/50 series
+--index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1
+torchaudio==2.5.1
+torchvision==0.20.1

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Utai</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #0a0a1a;
+      color: #c0c0e0;
+      font-family: 'MS PGothic', 'Courier New', monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .logo {
+      font-size: 48px;
+      letter-spacing: 4px;
+      margin-bottom: 20px;
+      text-shadow: 0 0 10px #7b68ee, 0 0 30px #7b68ee44;
+    }
+    .bracket { color: #ff69b4; }
+    .subtitle {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 40px;
+      letter-spacing: 2px;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 2px solid #1a1a35;
+      border-top: 2px solid #7b68ee;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+      margin-bottom: 20px;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .status {
+      font-size: 11px;
+      color: #666;
+      animation: blink 1.5s ease-in-out infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .border-line {
+      position: fixed;
+      background: linear-gradient(90deg, transparent, #7b68ee44, transparent);
+      height: 1px;
+      width: 100%;
+    }
+    .border-top { top: 0; }
+    .border-bottom { bottom: 0; }
+  </style>
+</head>
+<body>
+  <div class="border-line border-top"></div>
+  <div class="logo">
+    <span class="bracket">&#x300C;</span>Utai<span class="bracket">&#x300D;</span>
+  </div>
+  <div class="spinner"></div>
+  <div class="status">initializing backend...</div>
+  <div class="border-line border-bottom"></div>
+</body>
+</html>

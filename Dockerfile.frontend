@@ -1,0 +1,16 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files first for better caching
+COPY app/frontend/package.json app/frontend/package-lock.json* ./
+
+RUN npm install
+
+# Copy source
+COPY app/frontend/ ./
+
+# Build for production
+RUN npm run build
+
+# Output will be in /app/dist
