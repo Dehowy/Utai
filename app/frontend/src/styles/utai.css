@@ -2026,6 +2026,30 @@ input[type="checkbox"]:focus {
   overflow: hidden;
 }
 
+/* --- Horizontal scrollbar --- */
+.utai-synth-hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  height: 12px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border-dim);
+}
+
+.utai-synth-hscroll::-webkit-scrollbar {
+  height: 10px;
+}
+.utai-synth-hscroll::-webkit-scrollbar-track {
+  background: var(--bg-panel);
+}
+.utai-synth-hscroll::-webkit-scrollbar-thumb {
+  background: var(--border-mid);
+  border: 1px solid var(--border-dim);
+}
+.utai-synth-hscroll::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-purple);
+}
+
 /* --- Control Panel (right) --- */
 .utai-synth-control {
   display: flex;
