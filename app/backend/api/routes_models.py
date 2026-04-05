@@ -468,3 +468,404 @@ async def delete_model(model_name: str):
     dest.unlink()
     logger.info(f"Model deleted: {model_name}")
     return {"status": "deleted", "model_name": model_name}
+
+
+# ──────────────────────────────────────────────
+# DiffSinger voice bank management
+# ──────────────────────────────────────────────
+
+from app.backend.config import SYNTH_SINGERS_DIR, SYNTH_ROOT
+
+_ds_catalog_path = Path(__file__).resolve().parent.parent / "data" / "diffsinger_models.json"
+_ds_active_downloads: dict[str, dict] = {}
+
+
+def _load_ds_catalog() -> dict:
+    if not _ds_catalog_path.exists():
+        return {"vocoders": [], "singers": []}
+    with open(_ds_catalog_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _scan_installed_singers() -> list[dict]:
+    """Scan synth/Singers/ for installed DiffSinger voice banks."""
+    singers_dir = SYNTH_SINGERS_DIR
+    if not singers_dir.exists():
+        return []
+    results = []
+    for subdir in sorted(singers_dir.iterdir()):
+        if not subdir.is_dir() or subdir.name.startswith("_"):
+            continue
+        char_yaml = subdir / "character.yaml"
+        char_txt = subdir / "character.txt"
+        if not (char_yaml.exists() or char_txt.exists()):
+            # Also check configs/ subdirectory (flat layout)
+            char_yaml = subdir / "configs" / "character.yaml"
+            char_txt = subdir / "configs" / "character.txt"
+        if not (char_yaml.exists() or char_txt.exists()):
+            continue
+
+        info: dict[str, Any] = {"id": subdir.name, "path": str(subdir)}
+
+        # Parse character.yaml for metadata
+        for yf in [subdir / "character.yaml", subdir / "configs" / "character.yaml"]:
+            if yf.exists():
+                try:
+                    import yaml
+                    with open(yf, "r", encoding="utf-8") as f:
+                        data = yaml.safe_load(f) or {}
+                    info["name"] = data.get("name", subdir.name)
+                    info["singer_type"] = data.get("singer_type", "diffsinger")
+                    info["phonemizer"] = data.get("default_phonemizer", "")
+                    # Check for subbanks (vocal modes)
+                    if "subbanks" in data:
+                        info["subbanks"] = [sb.get("suffix", "") for sb in data["subbanks"] if isinstance(sb, dict)]
+                except Exception:
+                    info["name"] = subdir.name
+                break
+
+        if "name" not in info:
+            info["name"] = subdir.name
+
+        # Check for essential files
+        has_files = (subdir / "files").exists() or (subdir / "configs" / "dsconfig.yaml").exists()
+        info["has_model_files"] = has_files
+
+        # Calculate total size
+        total_size = 0
+        for f in subdir.rglob("*"):
+            if f.is_file():
+                total_size += f.stat().st_size
+        info["size_bytes"] = total_size
+
+        results.append(info)
+    return results
+
+
+@router.get("/diffsinger")
+async def list_diffsinger_models():
+    """List installed DiffSinger voice banks."""
+    return _scan_installed_singers()
+
+
+@router.get("/diffsinger/catalog")
+async def get_diffsinger_catalog():
+    """Return the downloadable DiffSinger model catalog with install status."""
+    catalog = _load_ds_catalog()
+    installed_ids = {s["id"] for s in _scan_installed_singers()}
+
+    # Add install status to each entry
+    for item in catalog.get("vocoders", []) + catalog.get("singers", []):
+        item["installed"] = item["id"] in installed_ids
+
+    return catalog
+
+
+class DSDownloadRequest(BaseModel):
+    model_id: str
+
+
+@router.post("/diffsinger/download")
+async def start_diffsinger_download(req: DSDownloadRequest):
+    """Start downloading a DiffSinger voice bank (zip → extract to Singers/)."""
+    catalog = _load_ds_catalog()
+    all_models = catalog.get("vocoders", []) + catalog.get("singers", [])
+    entry = next((m for m in all_models if m["id"] == req.model_id), None)
+
+    if not entry:
+        raise HTTPException(404, f"Model not found in catalog: {req.model_id}")
+
+    url = entry.get("url", "")
+    if not url:
+        raise HTTPException(400, f"No download URL for: {req.model_id}")
+
+    if req.model_id in _ds_active_downloads:
+        return {"status": "already_downloading", "model_id": req.model_id}
+
+    _ds_active_downloads[req.model_id] = {
+        "progress": 0,
+        "total_size": entry.get("size_bytes", 0),
+        "downloaded": 0,
+        "status": "downloading",
+        "error": None,
+    }
+
+    asyncio.create_task(_download_diffsinger(req.model_id, url, entry))
+    return {"status": "started", "model_id": req.model_id}
+
+
+async def _download_diffsinger(model_id: str, url: str, entry: dict):
+    """Download and extract a DiffSinger voice bank zip."""
+    import tempfile
+    import zipfile
+
+    singers_dir = SYNTH_SINGERS_DIR
+    singers_dir.mkdir(parents=True, exist_ok=True)
+    tmp_path = None
+
+    try:
+        total_size = entry.get("size_bytes", 0)
+
+        # Download zip to temp file
+        tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".zip", prefix=f"ds_{model_id}_")
+        tmp_path = Path(tmp_path_str)
+        import os
+        os.close(tmp_fd)
+
+        async with httpx.AsyncClient(follow_redirects=True, timeout=httpx.Timeout(600, connect=30)) as client:
+            async with client.stream("GET", url) as resp:
+                if resp.status_code != 200:
+                    _ds_active_downloads[model_id]["status"] = "error"
+                    _ds_active_downloads[model_id]["error"] = f"HTTP {resp.status_code}"
+                    return
+
+                content_length = resp.headers.get("content-length")
+                if content_length and not total_size:
+                    total_size = int(content_length)
+
+                downloaded = 0
+                with open(str(tmp_path), "wb") as f:
+                    async for chunk in resp.aiter_bytes(chunk_size=1024 * 256):
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        progress = (downloaded / total_size * 100) if total_size else 0
+                        _ds_active_downloads[model_id].update({
+                            "downloaded": downloaded,
+                            "total_size": total_size,
+                            "progress": min(progress, 95),
+                        })
+
+        # Extract zip
+        _ds_active_downloads[model_id].update({"progress": 96, "status": "extracting"})
+
+        dest_dir = singers_dir / model_id
+        dest_dir.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(str(tmp_path), "r") as zf:
+            # Check if zip has a single root folder
+            names = zf.namelist()
+            roots = set()
+            for n in names:
+                root = n.split("/")[0] if "/" in n else n
+                if root:
+                    roots.add(root)
+
+            if len(roots) == 1 and all("/" in n for n in names if n):
+                # Single root folder — extract contents directly
+                single_root = roots.pop()
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    # Strip the root folder from the path
+                    rel = member.filename[len(single_root) + 1:]
+                    if not rel:
+                        continue
+                    target = dest_dir / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, open(str(target), "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+            else:
+                # Multiple roots or flat — extract as-is
+                zf.extractall(str(dest_dir))
+
+        # Also copy to utai-renderer/Singers/ if renderer exists
+        renderer_singers = SYNTH_ROOT / "utai-renderer" / "Singers" / model_id
+        if (SYNTH_ROOT / "utai-renderer").exists():
+            if renderer_singers.exists():
+                shutil.rmtree(str(renderer_singers), ignore_errors=True)
+            shutil.copytree(str(dest_dir), str(renderer_singers))
+
+        _ds_active_downloads[model_id].update({"status": "completed", "progress": 100})
+        logger.info(f"DiffSinger model downloaded and extracted: {model_id} -> {dest_dir}")
+
+    except Exception as e:
+        logger.error(f"DiffSinger download failed for {model_id}: {e}")
+        _ds_active_downloads[model_id].update({"status": "error", "error": str(e)})
+    finally:
+        if tmp_path and tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+
+
+@router.get("/diffsinger/download-status/{model_id}")
+async def get_diffsinger_download_status(model_id: str):
+    """Poll download progress for a DiffSinger voice bank."""
+    status = _ds_active_downloads.get(model_id)
+    if not status:
+        return {"status": "not_found", "model_id": model_id}
+
+    result = {**status, "model_id": model_id}
+    if status["status"] in ("completed", "error"):
+        _ds_active_downloads.pop(model_id, None)
+    return result
+
+
+@router.post("/diffsinger/import")
+async def import_diffsinger_model(file: UploadFile = File(...)):
+    """Import a DiffSinger voice bank zip file."""
+    import tempfile
+    import zipfile
+
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise HTTPException(400, "Please upload a .zip file")
+
+    singers_dir = SYNTH_SINGERS_DIR
+    singers_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save uploaded file to temp
+    contents = await file.read()
+    tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".zip", prefix="ds_import_")
+    import os
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_path_str)
+    tmp_path.write_bytes(contents)
+
+    try:
+        with zipfile.ZipFile(str(tmp_path), "r") as zf:
+            names = zf.namelist()
+            roots = set()
+            for n in names:
+                root = n.split("/")[0] if "/" in n else n
+                if root:
+                    roots.add(root)
+
+            # Determine singer name from zip
+            singer_name = file.filename.rsplit(".", 1)[0]
+            if len(roots) == 1:
+                singer_name = roots.pop()
+
+            dest_dir = singers_dir / singer_name
+            if dest_dir.exists():
+                raise HTTPException(409, f"Singer '{singer_name}' already exists")
+
+            dest_dir.mkdir(parents=True, exist_ok=True)
+
+            if len(roots) == 1:
+                # Single root — extract flattened
+                root_prefix = singer_name + "/"
+                for member in zf.infolist():
+                    if member.is_dir():
+                        continue
+                    rel = member.filename
+                    if rel.startswith(root_prefix):
+                        rel = rel[len(root_prefix):]
+                    if not rel:
+                        continue
+                    target = dest_dir / rel
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, open(str(target), "wb") as dst:
+                        shutil.copyfileobj(src, dst)
+            else:
+                zf.extractall(str(dest_dir))
+
+        # Copy to renderer
+        renderer_singers = SYNTH_ROOT / "utai-renderer" / "Singers" / singer_name
+        if (SYNTH_ROOT / "utai-renderer").exists():
+            if renderer_singers.exists():
+                shutil.rmtree(str(renderer_singers), ignore_errors=True)
+            shutil.copytree(str(dest_dir), str(renderer_singers))
+
+        logger.info(f"DiffSinger model imported: {singer_name}")
+        return {"status": "imported", "singer_name": singer_name}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Import failed: {e}")
+    finally:
+        tmp_path.unlink(missing_ok=True)
+
+
+@router.post("/diffsinger/archive/{singer_id}")
+async def archive_diffsinger(singer_id: str):
+    """Archive a DiffSinger voice bank."""
+    singers_dir = SYNTH_SINGERS_DIR
+    src = singers_dir / singer_id
+    if not src.exists():
+        raise HTTPException(404, f"Singer not found: {singer_id}")
+
+    archive_dir = singers_dir / "_archived"
+    archive_dir.mkdir(exist_ok=True)
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = archive_dir / f"{singer_id}_{ts}"
+    shutil.move(str(src), str(dest))
+
+    # Also remove from renderer
+    renderer_path = SYNTH_ROOT / "utai-renderer" / "Singers" / singer_id
+    if renderer_path.exists():
+        shutil.rmtree(str(renderer_path), ignore_errors=True)
+
+    logger.info(f"DiffSinger archived: {singer_id} -> {dest.name}")
+    return {"status": "archived", "archived_name": dest.name}
+
+
+@router.get("/diffsinger/archived")
+async def list_archived_diffsinger():
+    """List archived DiffSinger voice banks."""
+    archive_dir = SYNTH_SINGERS_DIR / "_archived"
+    if not archive_dir.exists():
+        return []
+    results = []
+    for d in sorted(archive_dir.iterdir()):
+        if d.is_dir():
+            total_size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+            results.append({
+                "name": d.name,
+                "size_bytes": total_size,
+            })
+    return results
+
+
+@router.post("/diffsinger/restore/{archived_name}")
+async def restore_diffsinger(archived_name: str):
+    """Restore an archived DiffSinger voice bank."""
+    archive_dir = SYNTH_SINGERS_DIR / "_archived"
+    src = archive_dir / archived_name
+    if not src.exists():
+        raise HTTPException(404, f"Archived singer not found: {archived_name}")
+
+    # Strip timestamp to get original name
+    parts = archived_name.rsplit("_", 2)
+    original_name = parts[0] if len(parts) >= 3 else archived_name
+
+    dest = SYNTH_SINGERS_DIR / original_name
+    if dest.exists():
+        raise HTTPException(409, f"Singer '{original_name}' already exists")
+
+    shutil.move(str(src), str(dest))
+
+    # Copy to renderer
+    renderer_path = SYNTH_ROOT / "utai-renderer" / "Singers" / original_name
+    if (SYNTH_ROOT / "utai-renderer").exists():
+        if renderer_path.exists():
+            shutil.rmtree(str(renderer_path), ignore_errors=True)
+        shutil.copytree(str(dest), str(renderer_path))
+
+    logger.info(f"DiffSinger restored: {archived_name} -> {original_name}")
+    return {"status": "restored", "singer_name": original_name}
+
+
+@router.delete("/diffsinger/{singer_id}")
+async def delete_diffsinger(singer_id: str):
+    """Permanently delete a DiffSinger voice bank."""
+    src = SYNTH_SINGERS_DIR / singer_id
+    if not src.exists():
+        raise HTTPException(404, f"Singer not found: {singer_id}")
+    shutil.rmtree(str(src))
+    # Also remove from renderer
+    renderer_path = SYNTH_ROOT / "utai-renderer" / "Singers" / singer_id
+    if renderer_path.exists():
+        shutil.rmtree(str(renderer_path), ignore_errors=True)
+    logger.info(f"DiffSinger deleted: {singer_id}")
+    return {"status": "deleted", "singer_id": singer_id}
+
+
+@router.delete("/diffsinger/archived/{archived_name}")
+async def delete_archived_diffsinger(archived_name: str):
+    """Permanently delete an archived DiffSinger voice bank."""
+    src = SYNTH_SINGERS_DIR / "_archived" / archived_name
+    if not src.exists():
+        raise HTTPException(404, f"Archived singer not found: {archived_name}")
+    shutil.rmtree(str(src))
+    logger.info(f"DiffSinger archived deleted: {archived_name}")
+    return {"status": "deleted", "archived_name": archived_name}

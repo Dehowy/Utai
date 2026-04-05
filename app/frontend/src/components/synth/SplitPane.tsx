@@ -38,11 +38,11 @@ export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props)
       onMouseUp={onMouseUp}
       onMouseLeave={onMouseUp}
     >
-      <div style={{ width: `${leftWidth}%`, minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ width: `${leftWidth}%`, minWidth: 0, overflow: 'hidden', height: '100%' }}>
         {left}
       </div>
       <div className="utai-synth-split__divider" onMouseDown={onMouseDown} />
-      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', height: '100%' }}>
         {right}
       </div>
     </div>

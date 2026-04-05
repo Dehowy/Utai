@@ -502,6 +502,10 @@ function TrainFlow() {
 
         <div style={{ flex: 1 }} />
 
+        <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
+          {t('toolbar.synth')}
+        </Link>
+
         <Link to="/" className="utai-btn utai-btn--load" style={{ textDecoration: 'none' }}>
           {t('train.backToWorkflow')}
         </Link>

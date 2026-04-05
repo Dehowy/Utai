@@ -34,7 +34,10 @@ export interface RenderContext {
 /** Main render function — call on every frame. */
 export function renderPianoRoll(rc: RenderContext) {
   const { ctx, width, height } = rc;
-  ctx.clearRect(0, 0, width, height);
+
+  // Fill entire background first to avoid black gaps
+  ctx.fillStyle = '#0d0d1a';
+  ctx.fillRect(0, 0, width, height);
 
   drawGrid(rc);
   drawHoverRow(rc);

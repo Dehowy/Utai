@@ -71,6 +71,39 @@ export const restoreRVCModel = (archivedName: string) =>
 export const deleteArchivedRVCModel = (archivedName: string) =>
   fetchJSON<any>(`/api/models/rvc/archived/${encodeURIComponent(archivedName)}`, { method: 'DELETE' })
 
+// DiffSinger models
+export const getDiffSingerModels = () =>
+  fetchJSON<any[]>('/api/models/diffsinger')
+export const getDiffSingerCatalog = () =>
+  fetchJSON<any>('/api/models/diffsinger/catalog')
+export const downloadDiffSingerModel = (modelId: string) =>
+  fetchJSON<any>('/api/models/diffsinger/download', {
+    method: 'POST',
+    body: JSON.stringify({ model_id: modelId }),
+  })
+export const getDiffSingerDownloadStatus = (modelId: string) =>
+  fetchJSON<any>(`/api/models/diffsinger/download-status/${encodeURIComponent(modelId)}`)
+export async function importDiffSingerModel(zipFile: File) {
+  const formData = new FormData()
+  formData.append('file', zipFile)
+  const res = await fetch(`${API_BASE}/api/models/diffsinger/import`, { method: 'POST', body: formData })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Import failed: ${res.status}: ${text}`)
+  }
+  return res.json()
+}
+export const archiveDiffSinger = (singerId: string) =>
+  fetchJSON<any>(`/api/models/diffsinger/archive/${encodeURIComponent(singerId)}`, { method: 'POST' })
+export const getArchivedDiffSinger = () =>
+  fetchJSON<any[]>('/api/models/diffsinger/archived')
+export const restoreDiffSinger = (archivedName: string) =>
+  fetchJSON<any>(`/api/models/diffsinger/restore/${encodeURIComponent(archivedName)}`, { method: 'POST' })
+export const deleteDiffSinger = (singerId: string) =>
+  fetchJSON<any>(`/api/models/diffsinger/${encodeURIComponent(singerId)}`, { method: 'DELETE' })
+export const deleteArchivedDiffSinger = (archivedName: string) =>
+  fetchJSON<any>(`/api/models/diffsinger/archived/${encodeURIComponent(archivedName)}`, { method: 'DELETE' })
+
 // Audio
 export async function uploadAudio(file: File) {
   console.log('uploadAudio called:', file.name, file.size, file.type)

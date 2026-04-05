@@ -14,6 +14,7 @@ export default function RenderButton({ rvcSettings }: Props) {
   const singer = useSynthStore(s => s.singer);
   const rvcModel = useSynthStore(s => s.rvcModel);
   const renderStatus = useSynthStore(s => s.renderStatus);
+  const renderError = useSynthStore(s => s.renderError);
   const setRenderStatus = useSynthStore(s => s.setRenderStatus);
   const setRenderedUrl = useSynthStore(s => s.setRenderedUrl);
   const setFinalUrl = useSynthStore(s => s.setFinalUrl);
@@ -24,8 +25,16 @@ export default function RenderButton({ rvcSettings }: Props) {
 
   const handleRender = async () => {
     setRenderError('');
-    if (!singer) { setRenderError(t('synth.selectSingerFirst')); return; }
-    if (!hasNotes) { setRenderError(t('synth.noNotes')); return; }
+
+    // Validation
+    if (!singer) {
+      setRenderError(t('synth.selectSingerFirst'));
+      return;
+    }
+    if (!hasNotes) {
+      setRenderError(t('synth.noNotes'));
+      return;
+    }
 
     const yaml = serializeUstx(project);
 
@@ -46,8 +55,7 @@ export default function RenderButton({ rvcSettings }: Props) {
       }
       setRenderedUrl(URL.createObjectURL(renderedBlob));
     } catch (err: any) {
-      const msg = await extractError(err);
-      setRenderError(`${t('synth.renderFailed')}: ${msg}`);
+      setRenderError(`${t('synth.renderFailed')}: ${err.message || 'Unknown error'}`);
       setRenderStatus('error');
       return;
     }
@@ -64,8 +72,7 @@ export default function RenderButton({ rvcSettings }: Props) {
         if (!res.ok) throw new Error(await res.text());
         setFinalUrl(URL.createObjectURL(await res.blob()));
       } catch (err: any) {
-        const msg = await extractError(err);
-        setRenderError(`${t('synth.convertFailed')}: ${msg}`);
+        setRenderError(`${t('synth.convertFailed')}: ${err.message || 'Unknown error'}`);
         setRenderStatus('error');
         return;
       }
@@ -90,15 +97,11 @@ export default function RenderButton({ rvcSettings }: Props) {
           : t('synth.runPipeline')}
       </button>
       {rvcModel && <small style={{ color: 'var(--text-muted)', fontSize: 10, display: 'block', marginTop: 4 }}>+ RVC: {rvcModel}</small>}
-      {useSynthStore.getState().renderError && (
+      {renderError && (
         <div style={{ color: 'var(--accent-red)', fontSize: 11, marginTop: 4, fontFamily: 'var(--font-pixel)' }}>
-          {useSynthStore.getState().renderError}
+          {renderError}
         </div>
       )}
     </div>
   );
-}
-
-async function extractError(err: any): Promise<string> {
-  return err.message || 'Unknown error';
 }

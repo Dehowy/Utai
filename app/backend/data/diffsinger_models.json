@@ -1,0 +1,45 @@
+{
+  "_note": "Only models with standard open licenses (CC, MIT, Apache, etc.) are included. Custom/unclear licenses are excluded to avoid copyright issues.",
+  "vocoders": [
+    {
+      "id": "pc-nsf-hifigan-2025",
+      "name": "PC-NSF-HiFiGAN (2025.02)",
+      "author": "openvpi",
+      "description_zh": "最新社区声码器，支持音高变换，44.1kHz。渲染 DiffSinger 声库必需。",
+      "description_en": "Latest community vocoder with pitch shift support, 44.1kHz. Required for DiffSinger rendering.",
+      "description_ja": "最新コミュニティボコーダー、ピッチシフト対応、44.1kHz。DiffSingerレンダリングに必須。",
+      "license": "CC BY-NC-SA 4.0",
+      "license_short": "BY-NC-SA",
+      "url": "https://github.com/openvpi/vocoders/releases/download/2025.02-alpha/pc-nsf-hifigan-44.1k-hop512-128bin-2025.02.oudep",
+      "size_bytes": 55275110,
+      "type": "vocoder"
+    },
+    {
+      "id": "nsf-hifigan-2024",
+      "name": "NSF-HiFiGAN (2024.02)",
+      "author": "openvpi",
+      "description_zh": "稳定版社区声码器，44.1kHz。渲染 DiffSinger 声库必需。",
+      "description_en": "Stable community vocoder, 44.1kHz. Required for DiffSinger rendering.",
+      "description_ja": "安定版コミュニティボコーダー、44.1kHz。DiffSingerレンダリングに必須。",
+      "license": "CC BY-NC-SA 4.0",
+      "license_short": "BY-NC-SA",
+      "url": "https://github.com/openvpi/vocoders/releases/download/2024.02-alpha/nsf-hifigan-44.1k-hop512-128bin-2024.02.oudep",
+      "size_bytes": 55380582,
+      "type": "vocoder"
+    },
+    {
+      "id": "nsf-hifigan-v1-2022",
+      "name": "NSF-HiFiGAN v1 (2022)",
+      "author": "openvpi",
+      "description_zh": "经典版声码器 v1，44.1kHz",
+      "description_en": "Classic vocoder v1, 44.1kHz",
+      "description_ja": "クラシック版ボコーダー v1、44.1kHz",
+      "license": "CC BY-NC-SA 4.0",
+      "license_short": "BY-NC-SA",
+      "url": "https://github.com/openvpi/vocoders/releases/download/v1/nsf_hifigan_44.1k_hop512_128bin_2024.02.zip",
+      "size_bytes": 55400000,
+      "type": "vocoder"
+    }
+  ],
+  "singers": []
+}

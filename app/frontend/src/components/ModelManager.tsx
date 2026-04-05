@@ -13,6 +13,16 @@ import {
   getArchivedRVCModels,
   restoreRVCModel,
   deleteArchivedRVCModel,
+  getDiffSingerModels,
+  getDiffSingerCatalog,
+  downloadDiffSingerModel,
+  getDiffSingerDownloadStatus,
+  importDiffSingerModel,
+  archiveDiffSinger,
+  getArchivedDiffSinger,
+  restoreDiffSinger,
+  deleteDiffSinger,
+  deleteArchivedDiffSinger,
 } from '../api/client'
 import { emitModelsChanged } from '../utils/modelEvents'
 
@@ -21,7 +31,7 @@ interface ModelManagerProps {
   onClose: () => void
   initialCategory?: string
   /** Start on RVC tab */
-  initialTab?: 'separation' | 'rvc'
+  initialTab?: 'separation' | 'rvc' | 'diffsinger'
 }
 
 function formatSize(bytes: number): string {
@@ -33,14 +43,22 @@ function formatSize(bytes: number): string {
 
 export function ModelManager({ open, onClose, initialCategory, initialTab }: ModelManagerProps) {
   const { t, i18n } = useTranslation()
-  // Top-level section: 'separation' or 'rvc'
-  const [section, setSection] = useState<'separation' | 'rvc'>(initialTab || 'separation')
+  // Top-level section: 'separation' | 'rvc' | 'diffsinger'
+  const [section, setSection] = useState<'separation' | 'rvc' | 'diffsinger'>(initialTab || 'separation')
   const [categories, setCategories] = useState<any[]>([])
   const [selectedCat, setSelectedCat] = useState(initialCategory || '')
   const [models, setModels] = useState<any[]>([])
   const [rvcModels, setRvcModels] = useState<any[]>([])
   const [archivedModels, setArchivedModels] = useState<any[]>([])
   const [rvcSubTab, setRvcSubTab] = useState<'active' | 'archived'>('active')
+  // DiffSinger state
+  const [dsCatalog, setDsCatalog] = useState<any>({ vocoders: [], singers: [] })
+  const [dsInstalled, setDsInstalled] = useState<any[]>([])
+  const [dsArchived, setDsArchived] = useState<any[]>([])
+  const [dsSubTab, setDsSubTab] = useState<'vocoder' | 'installed' | 'archived'>('vocoder')
+  const [dsDownloading, setDsDownloading] = useState<Record<string, number>>({})
+  const [dsImportOpen, setDsImportOpen] = useState(false)
+  const [dsImporting, setDsImporting] = useState(false)
   const [downloading, setDownloading] = useState<Record<string, number>>({})
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleting, setDeleting] = useState<Record<string, boolean>>({})
@@ -65,6 +83,12 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     getArchivedRVCModels().then(setArchivedModels).catch(console.error)
   }, [])
 
+  const refreshDsData = useCallback(() => {
+    getDiffSingerCatalog().then(setDsCatalog).catch(console.error)
+    getDiffSingerModels().then(setDsInstalled).catch(console.error)
+    getArchivedDiffSinger().then(setDsArchived).catch(console.error)
+  }, [])
+
   // Load data on open
   useEffect(() => {
     if (!open) return
@@ -75,6 +99,7 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
       }
     }).catch(console.error)
     refreshRvcData()
+    refreshDsData()
   }, [open])
 
   // Load models for selected separation category
@@ -294,9 +319,104 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     })
   }, [refreshRvcData])
 
+  // ── DiffSinger download ──
+  const dsPollRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+  const handleDsDownload = useCallback(async (modelId: string) => {
+    try {
+      setDsDownloading((prev) => ({ ...prev, [modelId]: 0 }))
+      await downloadDiffSingerModel(modelId)
+      const interval = setInterval(async () => {
+        try {
+          const status = await getDiffSingerDownloadStatus(modelId)
+          if (status.status === 'completed') {
+            clearInterval(interval)
+            delete dsPollRef.current[modelId]
+            setDsDownloading((prev) => { const n = { ...prev }; delete n[modelId]; return n })
+            refreshDsData()
+            emitModelsChanged()
+          } else if (status.status === 'error') {
+            clearInterval(interval)
+            delete dsPollRef.current[modelId]
+            setDsDownloading((prev) => { const n = { ...prev }; delete n[modelId]; return n })
+          } else {
+            setDsDownloading((prev) => ({ ...prev, [modelId]: status.progress || 0 }))
+          }
+        } catch { /* ignore */ }
+      }, 1000)
+      dsPollRef.current[modelId] = interval
+    } catch { /* ignore */ }
+  }, [refreshDsData])
+
+  const dsZipInputRef = useRef<HTMLInputElement>(null)
+  const handleDsImport = useCallback(async (file: File) => {
+    setDsImporting(true)
+    try {
+      await importDiffSingerModel(file)
+      refreshDsData()
+      emitModelsChanged()
+      setDsImportOpen(false)
+    } catch (e: any) {
+      alert(`Import failed: ${e.message}`)
+    } finally {
+      setDsImporting(false)
+    }
+  }, [refreshDsData])
+
+  const handleDsArchive = useCallback(async (singerId: string) => {
+    setDeleting((prev) => ({ ...prev, [singerId]: true }))
+    try {
+      await archiveDiffSinger(singerId)
+      refreshDsData()
+      emitModelsChanged()
+    } catch { /* ignore */ }
+    finally { setDeleting((prev) => { const n = { ...prev }; delete n[singerId]; return n }) }
+  }, [refreshDsData])
+
+  const handleDsRestore = useCallback(async (archivedName: string) => {
+    setDeleting((prev) => ({ ...prev, [archivedName]: true }))
+    try {
+      await restoreDiffSinger(archivedName)
+      refreshDsData()
+      emitModelsChanged()
+    } catch { /* ignore */ }
+    finally { setDeleting((prev) => { const n = { ...prev }; delete n[archivedName]; return n }) }
+  }, [refreshDsData])
+
+  const handleDsDelete = useCallback(async (singerId: string) => {
+    setConfirmDelete({
+      name: singerId,
+      action: async () => {
+        setDeleting((prev) => ({ ...prev, [singerId]: true }))
+        try {
+          await deleteDiffSinger(singerId)
+          refreshDsData()
+          emitModelsChanged()
+        } catch { /* ignore */ }
+        finally { setDeleting((prev) => { const n = { ...prev }; delete n[singerId]; return n }) }
+      },
+    })
+  }, [refreshDsData])
+
+  const handleDsDeleteArchived = useCallback(async (archivedName: string) => {
+    setConfirmDelete({
+      name: archivedName,
+      action: async () => {
+        setDeleting((prev) => ({ ...prev, [archivedName]: true }))
+        try {
+          await deleteArchivedDiffSinger(archivedName)
+          refreshDsData()
+        } catch { /* ignore */ }
+        finally { setDeleting((prev) => { const n = { ...prev }; delete n[archivedName]; return n }) }
+      },
+    })
+  }, [refreshDsData])
+
   // Cleanup
   useEffect(() => {
-    return () => { Object.values(pollRef.current).forEach(clearInterval) }
+    return () => {
+      Object.values(pollRef.current).forEach(clearInterval)
+      Object.values(dsPollRef.current).forEach(clearInterval)
+    }
   }, [])
 
   if (!open) return null
@@ -342,9 +462,16 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
             >
               {t('models.tabRVC')}
             </button>
+            <button
+              className={`utai-model-manager__section-tab ${section === 'diffsinger' ? 'utai-model-manager__section-tab--active' : ''}`}
+              onClick={() => setSection('diffsinger')}
+              style={section === 'diffsinger' ? { borderColor: 'var(--accent-purple)', color: 'var(--accent-purple)' } : undefined}
+            >
+              {t('models.tabDiffSinger')}
+            </button>
           </div>
 
-          {section === 'separation' ? (
+          {section === 'separation' && (
             <div className="utai-model-manager__body">
               {/* Category sub-tabs */}
               <div className="utai-model-manager__tabs">
@@ -452,7 +579,9 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                 )}
               </div>
             </div>
-          ) : (
+          )}
+
+          {section === 'rvc' && (
             /* ── RVC Section ── */
             <div className="utai-model-manager__body">
               {/* Hidden file inputs */}
@@ -626,6 +755,173 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                       )
                     })}
                     {archivedModels.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 12 }}>
+                        {t('models.archiveEmpty')}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+
+          {section === 'diffsinger' && (
+            /* ── DiffSinger Section ── */
+            <div className="utai-model-manager__body">
+              {/* Hidden zip input */}
+              <input ref={dsZipInputRef} type="file" accept=".zip" style={{ display: 'none' }}
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) handleDsImport(f)
+                  e.target.value = ''
+                }} />
+
+              {/* Sub-tabs + import button */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', borderBottom: '1px solid var(--border-dim)' }}>
+                <button
+                  className="utai-btn utai-model-manager__download-btn"
+                  onClick={() => dsZipInputRef.current?.click()}
+                  disabled={dsImporting}
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                >
+                  {dsImporting ? t('models.dsImporting') : t('models.dsImport')}
+                </button>
+                <div style={{ flex: 1 }} />
+                <button
+                  className={`utai-model-manager__section-tab ${dsSubTab === 'vocoder' ? 'utai-model-manager__section-tab--active' : ''}`}
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                  onClick={() => setDsSubTab('vocoder')}
+                >
+                  {t('models.dsVocoders')}
+                </button>
+                <button
+                  className={`utai-model-manager__section-tab ${dsSubTab === 'installed' ? 'utai-model-manager__section-tab--active' : ''}`}
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                  onClick={() => setDsSubTab('installed')}
+                >
+                  {t('models.dsInstalled')} {dsInstalled.length > 0 && `(${dsInstalled.length})`}
+                </button>
+                <button
+                  className={`utai-model-manager__section-tab ${dsSubTab === 'archived' ? 'utai-model-manager__section-tab--active' : ''}`}
+                  style={{ fontSize: 10, padding: '2px 8px' }}
+                  onClick={() => setDsSubTab('archived')}
+                >
+                  {t('models.dsArchived')} {dsArchived.length > 0 && `(${dsArchived.length})`}
+                </button>
+              </div>
+
+              <div className="utai-model-manager__list">
+                {dsSubTab === 'vocoder' ? (
+                  <>
+                    {(dsCatalog.vocoders || []).map((m: any) => {
+                      const lang = i18n.language as 'zh' | 'ja' | 'en'
+                      const desc = m[`description_${lang}`] || m.description_en || ''
+                      const isDownloading = m.id in dsDownloading
+                      const progress = dsDownloading[m.id] || 0
+                      return (
+                        <div key={m.id} className="utai-model-manager__item">
+                          <div className="utai-model-manager__item-info">
+                            <span className={`utai-model-manager__item-name ${m.installed ? '' : 'utai-model-manager__item-name--dim'}`}>
+                              {m.installed && <span className="utai-model-manager__check">&#10003; </span>}
+                              {m.name}
+                            </span>
+                            <span style={{ fontSize: 8, padding: '0 4px', border: '1px solid var(--border-mid)', color: 'var(--accent-gold)', marginLeft: 4, fontFamily: 'var(--font-mono)' }}>
+                              {m.license_short}
+                            </span>
+                            <span style={{ fontSize: 8, color: 'var(--text-muted)', marginLeft: 4, fontFamily: 'var(--font-pixel)' }}>
+                              by {m.author}
+                            </span>
+                            {desc && <span style={{ fontSize: 9, color: 'var(--accent-purple)', opacity: 0.6, marginLeft: 6 }}>{desc}</span>}
+                            <span className="utai-model-manager__item-size">{formatSize(m.size_bytes)}</span>
+                          </div>
+                          <div className="utai-model-manager__item-actions">
+                            {m.installed ? (
+                              <span className="utai-model-manager__installed">{t('models.installed')}</span>
+                            ) : isDownloading ? (
+                              <div className="utai-model-manager__progress">
+                                <div className="utai-model-manager__progress-bar">
+                                  <div className="utai-model-manager__progress-fill" style={{ width: `${progress}%` }} />
+                                </div>
+                                <span className="utai-model-manager__progress-text">{progress.toFixed(0)}%</span>
+                              </div>
+                            ) : (
+                              <button className="utai-btn utai-model-manager__download-btn" onClick={() => handleDsDownload(m.id)}>
+                                {t('models.download')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {dsCatalog.vocoders?.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 12 }}>
+                        {t('models.dsEmpty')}
+                      </div>
+                    )}
+                  </>
+                ) : dsSubTab === 'installed' ? (
+                  <>
+                    {dsInstalled.map((m) => {
+                      const isProcessing = m.id in deleting
+                      return (
+                        <div key={m.id} className={`utai-model-manager__item ${deleteMode ? 'utai-model-manager__item--delete-mode' : ''}`}>
+                          <div className="utai-model-manager__item-info">
+                            <span className="utai-model-manager__item-name">{m.name || m.id}</span>
+                            <span className="utai-model-manager__item-size" style={{ color: 'var(--text-muted)', fontSize: 9 }}>
+                              {formatSize(m.size_bytes)}
+                            </span>
+                          </div>
+                          <div className="utai-model-manager__item-actions">
+                            {deleteMode ? (
+                              <div style={{ display: 'flex', gap: 4 }}>
+                                <button className="utai-btn" onClick={() => handleDsArchive(m.id)} disabled={isProcessing}
+                                  style={{ fontSize: 9, padding: '1px 6px', color: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}>
+                                  {t('models.archive')}
+                                </button>
+                                <button className="utai-btn utai-model-manager__delete-btn" onClick={() => handleDsDelete(m.id)} disabled={isProcessing}>
+                                  {isProcessing ? '...' : t('models.delete')}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="utai-model-manager__installed">{t('models.installed')}</span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {dsInstalled.length === 0 && (
+                      <div style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 12 }}>
+                        {t('models.dsNoInstalled')}
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {dsArchived.map((m) => {
+                      const isProcessing = m.name in deleting
+                      return (
+                        <div key={m.name} className="utai-model-manager__item">
+                          <div className="utai-model-manager__item-info">
+                            <span className="utai-model-manager__item-name" style={{ opacity: 0.6 }}>{m.name}</span>
+                            <span className="utai-model-manager__item-size" style={{ color: 'var(--text-muted)', fontSize: 9 }}>
+                              {formatSize(m.size_bytes)}
+                            </span>
+                          </div>
+                          <div className="utai-model-manager__item-actions" style={{ display: 'flex', gap: 4 }}>
+                            <button className="utai-btn" onClick={() => handleDsRestore(m.name)} disabled={isProcessing}
+                              style={{ fontSize: 9, padding: '1px 6px', color: 'var(--accent-green)', borderColor: 'var(--accent-green)' }}>
+                              {t('models.restore')}
+                            </button>
+                            {deleteMode && (
+                              <button className="utai-btn utai-model-manager__delete-btn" onClick={() => handleDsDeleteArchived(m.name)} disabled={isProcessing}>
+                                {isProcessing ? '...' : t('models.delete')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                    {dsArchived.length === 0 && (
                       <div style={{ textAlign: 'center', color: 'var(--text-dim)', padding: 20, fontSize: 12 }}>
                         {t('models.archiveEmpty')}
                       </div>
