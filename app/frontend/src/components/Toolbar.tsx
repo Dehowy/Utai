@@ -94,6 +94,10 @@ export function Toolbar({ onExecute, onOpenModelManager }: ToolbarProps) {
 
       <div style={{ flex: 1 }} />
 
+      <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
+        {t('toolbar.synth')}
+      </Link>
+
       <Link to="/train" className="utai-btn utai-btn--save" style={{ textDecoration: 'none' }}>
         {t('toolbar.training')}
       </Link>

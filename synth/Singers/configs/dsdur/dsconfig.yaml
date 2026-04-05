@@ -1,0 +1,32 @@
+dur: ../../files/dur.onnx
+linguistic: ../../files/linguistic-dur.onnx
+phonemes: ../../files/phonemes-variance.json
+languages: ../../files/languages.json
+
+hop_size: 512
+sample_rate: 44100
+hidden_size: 384
+
+use_lang_id: true
+predict_dur: true
+use_continuous_acceleration: true
+
+speakers:
+- embeds/standard
+
+num_lang: 14
+dictionaries:
+  ar: ../../../files/dictionary-ar.txt
+  de: ../../../files/dictionary-de.txt
+  en: ../../../files/dictionary-en.txt
+  es: ../../../files/dictionary-es.txt
+  fr: ../../../files/dictionary-fr.txt
+  it: ../../../files/dictionary-it.txt
+  ja: ../../../files/dictionary-ja.txt
+  ko: ../../../files/dictionary-ko.txt
+  pl: ../../../files/dictionary-pl.txt
+  pt: ../../../files/dictionary-pt.txt
+  ru: ../../../files/dictionary-ru.txt
+  th: ../../../files/dictionary-th.txt
+  uk: ../../../files/dictionary-uk.txt
+  zh: ../../../files/dictionary-zh.txt

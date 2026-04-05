@@ -67,6 +67,24 @@ RVC/**/assets/rmvpe/*.pth
 RVC/**/assets/rmvpe/*.onnx
 RVC/**/assets/*.pth
 
+# Synth (UtaiSynth — DiffSinger + OpenUtau integration)
+# Pre-compiled renderer binaries (large, platform-specific)
+synth/utai-renderer/**/*.exe
+synth/utai-renderer/**/*.dll
+synth/utai-renderer/**/*.so
+synth/utai-renderer/**/*.dylib
+synth/utai-renderer/**/*.pdb
+synth/utai-renderer/runtimes/
+synth/utai-renderer/Cache/
+# DiffSinger voice bank data & models (large, user-managed)
+synth/**/Singers/**/files/
+synth/**/Singers/**/tgm_hifigan/
+synth/**/*.onnx
+synth/**/*.webp
+synth/**/*.emb
+# UtaiSynthesizer standalone (reference only, remove after integration)
+UtaiSynthesizer/
+
 # Electron
 electron/node_modules/
 

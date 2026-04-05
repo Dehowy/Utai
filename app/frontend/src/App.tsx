@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, useNavigate } from 'react-router-dom'
 import WorkflowPage from './pages/WorkflowPage'
 import TrainingPage from './pages/TrainingPage'
+import SynthPage from './pages/SynthPage'
 import { importWorkflowFromPath } from './api/client'
 import { useWorkflowStore } from './store/workflowStore'
 import { useTrainingStore } from './store/trainingStore'
@@ -54,6 +55,7 @@ function AppContent() {
     <Routes>
       <Route path="/" element={<WorkflowPage />} />
       <Route path="/train" element={<TrainingPage />} />
+      <Route path="/synth" element={<SynthPage />} />
     </Routes>
   )
 }

@@ -21,6 +21,11 @@ OUTPUT_DIR = APP_ROOT / "output"
 WORKFLOWS_DIR = APP_ROOT / "workflows"
 STATIC_DIR = APP_ROOT / "backend" / "static"
 
+# Synth paths
+SYNTH_ROOT = PROJECT_ROOT / "synth"
+SYNTH_RENDERER_DIR = SYNTH_ROOT / "utai-renderer"
+SYNTH_SINGERS_DIR = SYNTH_ROOT / "Singers"
+
 # Ensure directories exist
 TEMP_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

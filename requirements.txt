@@ -84,6 +84,10 @@ regex>=2022.10.31
 six>=1.16.0
 
 # ============================================================
+# ---------- Synth (UtaiSynth — DiffSinger + G2P) ----------
+g2p_en>=2.1.0
+pyyaml>=6.0
+
 # NOTE: After installing librosa==0.9.2, you may need to patch:
 #   site-packages/librosa/util/utils.py line ~2185
 #   Change: np.dtype(complex): np.dtype(np.float).type,
