@@ -1996,13 +1996,19 @@ input[type="checkbox"]:focus {
   overflow: hidden;
 }
 
+.utai-synth-piano__toolbar-row {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-dim);
+}
+
 .utai-synth-piano__toolbar {
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-dim);
   font-family: var(--font-pixel);
   font-size: 12px;
 }
@@ -2026,14 +2032,13 @@ input[type="checkbox"]:focus {
   overflow: hidden;
 }
 
-/* --- Horizontal scrollbar --- */
+/* --- Horizontal scrollbar (inside toolbar row) --- */
 .utai-synth-hscroll {
-  overflow-x: auto;
+  overflow-x: scroll;
   overflow-y: hidden;
-  height: 12px;
+  height: 10px;
   flex-shrink: 0;
   background: var(--bg-panel);
-  border-top: 1px solid var(--border-dim);
 }
 
 .utai-synth-hscroll::-webkit-scrollbar {

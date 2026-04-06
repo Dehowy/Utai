@@ -1,31 +1,19 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSynthStore } from '../../store/synthStore';
+import type { RVCSettings } from '../../store/synthStore';
 
-export interface RVCSettings {
-  f0_up_key: number;
-  f0_method: string;
-  index_rate: number;
-  filter_radius: number;
-  resample_sr: number;
-  rms_mix_rate: number;
-  protect: number;
-}
+export type { RVCSettings };
+export { defaultRVCSettings } from '../../store/synthStore';
 
-export const defaultRVCSettings: RVCSettings = {
-  f0_up_key: 0, f0_method: 'rmvpe', index_rate: 0.75, filter_radius: 3,
-  resample_sr: 0, rms_mix_rate: 0.25, protect: 0.33,
-};
-
-interface Props {
-  settings: RVCSettings;
-  onChange: (settings: RVCSettings) => void;
-}
-
-export default function RVCControls({ settings, onChange }: Props) {
+export default function RVCControls() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const settings = useSynthStore(s => s.rvcSettings);
+  const setRvcSettings = useSynthStore(s => s.setRvcSettings);
+
   const update = (key: keyof RVCSettings, value: number | string) => {
-    onChange({ ...settings, [key]: value });
+    setRvcSettings({ [key]: value });
   };
 
   return (

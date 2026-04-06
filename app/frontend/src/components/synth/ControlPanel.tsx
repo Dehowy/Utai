@@ -1,10 +1,9 @@
-import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import ProjectInfo from './ProjectInfo';
 import SingerSelector from './SingerSelector';
 import RVCModelSelector from './RVCModelSelector';
-import RVCControls, { type RVCSettings, defaultRVCSettings } from './RVCControls';
+import RVCControls from './RVCControls';
 import RenderButton from './RenderButton';
 import AudioPreview from './AudioPreview';
 import LogViewer from './LogViewer';
@@ -14,18 +13,18 @@ export default function ControlPanel() {
   const { t } = useTranslation();
   const renderedUrl = useSynthStore(s => s.renderedUrl);
   const finalUrl = useSynthStore(s => s.finalUrl);
-  const [rvcSettings, setRvcSettings] = useState<RVCSettings>(defaultRVCSettings);
 
   return (
     <div className="utai-synth-control">
       <ProjectInfo />
+      <G2pTool />
       <SingerSelector />
       <RVCModelSelector />
-      <RVCControls settings={rvcSettings} onChange={setRvcSettings} />
+      <RVCControls />
 
       <hr style={{ border: 'none', borderTop: '1px dashed var(--border-dim)' }} />
 
-      <RenderButton rvcSettings={rvcSettings} />
+      <RenderButton />
 
       <hr style={{ border: 'none', borderTop: '1px dashed var(--border-dim)' }} />
 
@@ -33,7 +32,6 @@ export default function ControlPanel() {
       <AudioPreview label={t('synth.audioFinal')} audioUrl={finalUrl} />
 
       <div style={{ marginTop: 'auto' }}>
-        <G2pTool />
         <LogViewer />
       </div>
     </div>

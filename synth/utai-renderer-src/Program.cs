@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -16,14 +17,57 @@ namespace UtaiRenderer;
 
 class Program
 {
+    // Simulates a UI message pump: executes callbacks synchronously but prevents
+    // re-entrant stack overflow by queueing nested calls and draining iteratively.
+    static readonly ConcurrentQueue<Action> _uiQueue = new();
+    static bool _drainingUI = false;
+
+    /// <summary>Enqueue a callback and drain if not already draining.</summary>
+    static void EnqueueAndDrain(Action action)
+    {
+        _uiQueue.Enqueue(action);
+        if (!_drainingUI)
+        {
+            _drainingUI = true;
+            try
+            {
+                while (_uiQueue.TryDequeue(out var a))
+                {
+                    try { a(); } catch (Exception ex)
+                    {
+                        // Log but don't crash — UI notifications may fail in headless mode
+                        Console.Error.WriteLine($"[warn] UI callback error: {ex.Message}");
+                    }
+                }
+            }
+            finally { _drainingUI = false; }
+        }
+    }
+
+    /// <summary>Drain any remaining queued UI callbacks.</summary>
+    static void DrainUIQueue()
+    {
+        // Force drain even if not currently draining (for explicit poll points)
+        while (_uiQueue.TryDequeue(out var action))
+        {
+            try { action(); } catch { }
+        }
+    }
+
     static int Main(string[] args)
     {
         // Register additional encodings (shift_jis, etc.)
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
+        // Write log next to the executable, not in cwd; rotate at 10 MB
+        var exeDir = AppContext.BaseDirectory;
+        var logPath = Path.Combine(exeDir, "utai-renderer.log");
         Log.Logger = new LoggerConfiguration()
-            .MinimumLevel.Information()
-            .WriteTo.File("utai-renderer.log")
+            .MinimumLevel.Debug()
+            .WriteTo.File(logPath,
+                fileSizeLimitBytes: 10 * 1024 * 1024,
+                rollOnFileSizeLimit: true,
+                retainedFileCountLimit: 2)
             .CreateLogger();
 
         if (args.Length < 1)
@@ -64,13 +108,49 @@ class Program
         Console.WriteLine("  info     Show project information");
     }
 
+    /// <summary>Custom TaskScheduler that queues tasks for explicit drain on main thread.</summary>
+    sealed class HeadlessTaskScheduler : TaskScheduler
+    {
+        public readonly ConcurrentQueue<Task> PendingTasks = new();
+        protected override IEnumerable<Task> GetScheduledTasks() => PendingTasks;
+        protected override void QueueTask(Task task) => PendingTasks.Enqueue(task);
+        protected override bool TryExecuteTaskInline(Task task, bool taskWasPreviouslyQueued) => TryExecuteTask(task);
+        public void DrainTasks()
+        {
+            while (PendingTasks.TryDequeue(out var task))
+                TryExecuteTask(task);
+        }
+    }
+
+    static readonly HeadlessTaskScheduler _headlessScheduler = new();
+
     static void InitializeCore()
     {
-        DocManager.Inst.Initialize(Thread.CurrentThread, TaskScheduler.Default);
-        // In console app, silently ignore UI thread notifications (progress bars etc.)
-        // The render thread tries to post ProgressBarNotifications back to the UI thread,
-        // which we don't have. Just drop them.
-        DocManager.Inst.PostOnUIThread = action => { /* no-op in headless mode */ };
+        // Enable GPU (DirectML) for ONNX inference if available
+        OpenUtau.Core.Util.Preferences.Default.OnnxRunner = "DirectML";
+        OpenUtau.Core.Util.Preferences.Default.DiffSingerTensorCache = true;
+        try {
+            var gpus = Onnx.getGpuInfo();
+            // Pick the most capable GPU (prefer discrete over integrated)
+            int bestGpu = 0;
+            for (int i = 0; i < gpus.Count; i++) {
+                Console.WriteLine($"  GPU[{i}]: {gpus[i]}");
+                var desc = gpus[i].description.ToLower();
+                if (desc.Contains("nvidia") || desc.Contains("geforce") || desc.Contains("rtx") || desc.Contains("gtx")) {
+                    bestGpu = i;
+                }
+            }
+            OpenUtau.Core.Util.Preferences.Default.OnnxGpu = bestGpu;
+            Console.WriteLine($"Using GPU[{bestGpu}]: {(bestGpu < gpus.Count ? gpus[bestGpu].ToString() : "default")}");
+        } catch (Exception ex) {
+            Console.WriteLine($"GPU detection failed ({ex.Message}), CPU fallback");
+            OpenUtau.Core.Util.Preferences.Default.OnnxRunner = "CPU";
+        }
+
+        // Use custom scheduler so PhonemizerRunner.SendResponse tasks land
+        // in a queue we can drain from the main thread (not thread pool).
+        DocManager.Inst.Initialize(Thread.CurrentThread, _headlessScheduler);
+        DocManager.Inst.PostOnUIThread = action => EnqueueAndDrain(action);
         SingerManager.Inst.Initialize();
     }
 
@@ -114,6 +194,7 @@ class Program
             var project = Ustx.Load(inputPath);
             // Register project with DocManager so phonemizer runner can find it
             DocManager.Inst.ExecuteCmd(new LoadProjectNotification(project));
+            DrainUIQueue();
 
             Console.WriteLine($"Project: {project.name}");
             Console.WriteLine($"Tracks: {project.tracks.Count}");
@@ -125,16 +206,45 @@ class Program
                 Console.WriteLine($"  Track {i}: {track.Singer?.Name ?? "(no singer)"} ({track.Singer?.SingerType})");
             }
 
-            // Run phonemizer: ValidateFull pushes to PhonemizerRunner (async).
-            // We poll until phonemes appear or timeout.
+            // Pre-flight: check that required DiffSinger model files exist
+            foreach (var vp in project.parts.OfType<OpenUtau.Core.Ustx.UVoicePart>())
+            {
+                var singer = project.tracks[vp.trackNo].Singer;
+                if (singer == null) continue;
+                var singerDir = singer.Location;
+                if (!string.IsNullOrEmpty(singerDir))
+                {
+                    // Check files/ directory at singer root, parent, or sibling
+                    bool hasFiles = Directory.Exists(Path.Combine(singerDir, "files"))
+                        || Directory.Exists(Path.Combine(singerDir, "..", "files"))
+                        || Directory.Exists(Path.Combine(Path.GetDirectoryName(singerDir) ?? singerDir, "files"));
+                    if (!hasFiles)
+                    {
+                        Console.Error.WriteLine($"Error: Voice bank model files not found.");
+                        Console.Error.WriteLine($"  Expected: files/ directory near {singerDir}");
+                        Console.Error.WriteLine($"  The DiffSinger voice bank '{singer.Name}' has config but no ONNX models.");
+                        Console.Error.WriteLine($"  Please download the full voice bank (with .onnx models) via the Model Manager.");
+                        return 1;
+                    }
+                }
+            }
+
+            // Run phonemizer via PhonemizerRunner (async) with custom TaskScheduler drain.
+            // ValidateFull pushes requests; we poll + drain until phrases appear.
             Console.WriteLine("Phonemizing...");
             project.ValidateFull();
-            int maxWait = 30; // seconds
+            DrainUIQueue();
+            _headlessScheduler.DrainTasks();
+            DrainUIQueue();
+
+            int maxWait = 120;
+            bool phonemized = false;
             for (int wait = 0; wait < maxWait * 10; wait++)
             {
-                DocManager.Inst.PhonemizerRunner?.WaitFinish();
                 Thread.Sleep(100);
-                // Check if any voice part now has phrases
+                _headlessScheduler.DrainTasks();
+                DrainUIQueue();
+
                 project.Validate(new OpenUtau.Core.ValidateOptions { SkipPhonemizer = true });
                 bool hasPhrases = project.parts
                     .OfType<OpenUtau.Core.Ustx.UVoicePart>()
@@ -142,9 +252,53 @@ class Program
                 if (hasPhrases)
                 {
                     Console.WriteLine($"  Phonemization complete ({(wait + 1) * 100}ms)");
+                    phonemized = true;
                     break;
                 }
-                if (wait % 10 == 0 && wait > 0) Console.Write(".");
+                if (wait == 10)
+                {
+                    Console.WriteLine($"  [1s] scheduler pending={_headlessScheduler.PendingTasks.Count}, uiQ={_uiQueue.Count}");
+                    // Dump note/phoneme state for debugging
+                    foreach (var vp in project.parts.OfType<OpenUtau.Core.Ustx.UVoicePart>())
+                    {
+                        Console.WriteLine($"  Part '{vp.name}': {vp.notes.Count} notes, trackNo={vp.trackNo}");
+                        if (vp.notes.Count > 0)
+                        {
+                            var first = vp.notes.First();
+                            Console.WriteLine($"    First note: lyric='{first.lyric}' tone={first.tone} pos={first.position}");
+                        }
+                    }
+                }
+                if (wait == 50) Console.WriteLine($"  [5s] scheduler pending={_headlessScheduler.PendingTasks.Count}, uiQ={_uiQueue.Count}");
+                if (wait % 100 == 0 && wait > 0) Console.Write(".");
+            }
+
+            if (!phonemized)
+            {
+                Console.Error.WriteLine("Error: Phonemization timed out after 120s. Diagnostics:");
+                Console.Error.WriteLine($"  scheduler pending={_headlessScheduler.PendingTasks.Count}, uiQ={_uiQueue.Count}");
+                // Check each singer's model files for the user
+                foreach (var vp in project.parts.OfType<OpenUtau.Core.Ustx.UVoicePart>())
+                {
+                    var singer = project.tracks[vp.trackNo].Singer;
+                    if (singer == null) { Console.Error.WriteLine($"  Track {vp.trackNo}: NO SINGER assigned"); continue; }
+                    Console.Error.WriteLine($"  Track {vp.trackNo}: singer='{singer.Name}' location='{singer.Location}'");
+                    var filesDir = Path.Combine(singer.Location, "files");
+                    Console.Error.WriteLine($"    files/ exists: {Directory.Exists(filesDir)}");
+                    if (Directory.Exists(filesDir))
+                    {
+                        var phonemesJson = Path.Combine(filesDir, "phonemes.json");
+                        var languagesJson = Path.Combine(filesDir, "languages.json");
+                        Console.Error.WriteLine($"    phonemes.json: {File.Exists(phonemesJson)}");
+                        Console.Error.WriteLine($"    languages.json: {File.Exists(languagesJson)}");
+                    }
+                }
+                Console.Error.WriteLine("  Possible causes:");
+                Console.Error.WriteLine("    - Voice bank ONNX model files missing (phonemes.json, languages.json, *.onnx)");
+                Console.Error.WriteLine("    - Incompatible phonemizer for the voice bank");
+                Console.Error.WriteLine("    - Path resolution error in dsconfig.yaml (check relative paths)");
+                Console.Error.WriteLine($"  Check log file for details: {Path.Combine(AppContext.BaseDirectory, "utai-renderer.log")}");
+                return 1;
             }
 
             var cancellation = new CancellationTokenSource();
@@ -157,20 +311,60 @@ class Program
                 ? new RenderEngine(project, trackNo: trackNo)
                 : new RenderEngine(project);
 
-            Tuple<WaveMix, System.Collections.Generic.List<OpenUtau.Core.SignalChain.Fader>> result;
-            try
+            // Run the blocking RenderMixdown on a background thread so we can
+            // drain UI + scheduler callbacks on the main thread (avoids deadlock).
+            Tuple<WaveMix, System.Collections.Generic.List<OpenUtau.Core.SignalChain.Fader>> result = null;
+            Exception renderError = null;
+
+            var renderThread = new Thread(() =>
             {
-                result = engine.RenderMixdown(
-                    TaskScheduler.Default,
-                    ref cancellation,
-                    wait: true);
-            }
-            catch (AggregateException ae)
-            {
-                foreach (var inner in ae.Flatten().InnerExceptions)
+                try
                 {
-                    Console.Error.WriteLine($"Render inner error: {inner.Message}");
-                    Console.Error.WriteLine($"  at: {inner.StackTrace?.Split('\n').FirstOrDefault()?.Trim()}");
+                    result = engine.RenderMixdown(
+                        _headlessScheduler,
+                        ref cancellation,
+                        wait: true);
+                }
+                catch (Exception ex)
+                {
+                    renderError = ex;
+                }
+            });
+            renderThread.IsBackground = true;
+            renderThread.Start();
+
+            // Main thread: drain callbacks while render runs
+            int renderMaxWait = 300 * 10; // 300 seconds
+            for (int rw = 0; rw < renderMaxWait && renderThread.IsAlive; rw++)
+            {
+                Thread.Sleep(100);
+                _headlessScheduler.DrainTasks();
+                DrainUIQueue();
+                if (rw % 100 == 0 && rw > 0) Console.Write(".");
+            }
+
+            if (renderThread.IsAlive)
+            {
+                cancellation.Cancel();
+                renderThread.Join(5000);
+                Console.Error.WriteLine("\nError: Rendering timed out (300s)");
+                return 1;
+            }
+
+            if (renderError != null)
+            {
+                var ae = renderError as AggregateException;
+                if (ae != null)
+                {
+                    foreach (var inner in ae.Flatten().InnerExceptions)
+                    {
+                        Console.Error.WriteLine($"Render error: {inner.Message}");
+                        Console.Error.WriteLine($"  at: {inner.StackTrace?.Split('\n').FirstOrDefault()?.Trim()}");
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine($"Render error: {renderError.Message}");
                 }
                 return 1;
             }

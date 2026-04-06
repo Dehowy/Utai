@@ -76,7 +76,8 @@ function startBackend(port) {
     PYTHONUNBUFFERED: '1',
   }
 
-  // Do NOT set UTAI_DEV — so backend serves static files
+  // Tell backend to serve static frontend (Electron production mode)
+  env.UTAI_SERVE_STATIC = '1'
   delete env.UTAI_DEV
 
   const args = [

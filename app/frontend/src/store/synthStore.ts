@@ -10,6 +10,21 @@ import type { ViewState } from '../lib/synth/pianoRollEngine';
 
 export type Tool = 'select' | 'draw' | 'erase';
 
+export interface RVCSettings {
+  f0_up_key: number;
+  f0_method: string;
+  index_rate: number;
+  filter_radius: number;
+  resample_sr: number;
+  rms_mix_rate: number;
+  protect: number;
+}
+
+export const defaultRVCSettings: RVCSettings = {
+  f0_up_key: 0, f0_method: 'rmvpe', index_rate: 0.75, filter_radius: 3,
+  resample_sr: 0, rms_mix_rate: 0.25, protect: 0.33,
+};
+
 const MAX_UNDO = 50;
 
 function cloneProject(p: UProject): UProject {
@@ -36,6 +51,7 @@ interface SynthState {
   // Models
   singer: string;
   rvcModel: string;
+  rvcSettings: RVCSettings;
 
   // Render
   renderStatus: 'idle' | 'rendering' | 'converting' | 'done' | 'error';
@@ -72,6 +88,7 @@ interface SynthState {
   // Actions - Models
   setSingerModel: (singer: string) => void;
   setRvcModel: (model: string) => void;
+  setRvcSettings: (settings: Partial<RVCSettings>) => void;
 
   // Actions - Render
   setRenderStatus: (status: SynthState['renderStatus']) => void;
@@ -109,6 +126,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   },
   singer: '',
   rvcModel: '',
+  rvcSettings: { ...defaultRVCSettings },
   renderStatus: 'idle',
   renderedUrl: null,
   finalUrl: null,
@@ -265,6 +283,9 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   // Model actions
   setSingerModel: (singer) => set({ singer }),
   setRvcModel: (model) => set({ rvcModel: model }),
+  setRvcSettings: (partial) => set((state) => ({
+    rvcSettings: { ...state.rvcSettings, ...partial },
+  })),
 
   // Render actions
   setRenderStatus: (status) => set({ renderStatus: status }),

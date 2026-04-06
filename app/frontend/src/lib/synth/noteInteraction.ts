@@ -26,7 +26,10 @@ export function hitTest(
 
   const tick = screenToTick(x, viewState);
   const midi = screenToMidi(y, viewState);
-  const midiRounded = Math.floor(midi + 0.5);
+  // Use Math.floor so the hit zone aligns with the visual row (top-edge = note.tone)
+  // ceil: the visual row for midi N spans screenToMidi N (top) → N-1 (bottom),
+  // so ceil maps the entire row to N.
+  const midiRounded = Math.ceil(midi);
 
   const partOrder = [activePartIndex, ...project.voice_parts.map((_, i) => i).filter(i => i !== activePartIndex)];
 

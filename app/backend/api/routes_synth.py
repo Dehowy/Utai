@@ -7,6 +7,7 @@ RVC conversion reuses the existing rvc_wrapper from the main Utai backend.
 import logging
 import re
 import shutil
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Form, UploadFile, File
@@ -14,6 +15,11 @@ from fastapi.responses import FileResponse
 
 from app.backend.config import TEMP_DIR, OUTPUT_DIR
 from app.backend.wrappers.synth_wrapper import get_synth_wrapper, SYNTH_LOG_BUFFER
+
+
+def _safe_filename(name: str) -> str:
+    """Sanitize user-supplied filenames to prevent path traversal."""
+    return Path(name).name or "upload"
 
 router = APIRouter(prefix="/api/synth", tags=["synth"])
 logger = logging.getLogger("utai.synth")
@@ -86,7 +92,7 @@ async def render_content(
     return FileResponse(
         result["output_path"],
         media_type="audio/wav",
-        filename=f"{filename.rsplit('.', 1)[0]}_rendered.wav",
+        filename=f"{Path(filename).stem}_rendered.wav",
     )
 
 
@@ -99,7 +105,7 @@ async def render_project(
     synth_temp = TEMP_DIR / "synth"
     synth_temp.mkdir(parents=True, exist_ok=True)
 
-    ustx_path = synth_temp / file.filename
+    ustx_path = synth_temp / _safe_filename(file.filename)
     with open(ustx_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
 
@@ -149,7 +155,7 @@ async def run_pipeline_content(
 
     synth_output = OUTPUT_DIR / "synth"
     synth_output.mkdir(parents=True, exist_ok=True)
-    output_path = str(synth_output / f"{filename.rsplit('.', 1)[0]}_final.wav")
+    output_path = str(synth_output / f"{Path(filename).stem}_final.wav")
 
     try:
         audio_data, sr = sf.read(rendered_path)
@@ -177,7 +183,7 @@ async def run_pipeline_content(
         logger.error(f"RVC conversion failed: {e}")
         return {"success": False, "stage": "convert", "error": str(e)}
 
-    return FileResponse(output_path, media_type="audio/wav", filename=f"{filename.rsplit('.', 1)[0]}_final.wav")
+    return FileResponse(output_path, media_type="audio/wav", filename=f"{Path(filename).stem}_final.wav")
 
 
 # --- Convert (RVC only, for standalone audio conversion) ---
@@ -202,7 +208,7 @@ async def convert_audio(
     synth_temp.mkdir(parents=True, exist_ok=True)
 
     contents = await file.read()
-    input_path = synth_temp / f"rvc_input_{file.filename}"
+    input_path = synth_temp / f"rvc_input_{_safe_filename(file.filename)}"
     input_path.write_bytes(contents)
 
     if len(contents) < 100:
@@ -212,7 +218,7 @@ async def convert_audio(
 
     synth_output = OUTPUT_DIR / "synth"
     synth_output.mkdir(parents=True, exist_ok=True)
-    output_path = str(synth_output / f"rvc_output_{file.filename}")
+    output_path = str(synth_output / f"rvc_output_{_safe_filename(file.filename)}")
 
     try:
         audio_data, sr = sf.read(str(input_path))
@@ -254,6 +260,14 @@ async def list_singers():
     except FileNotFoundError:
         singers = wrapper.list_singers_from_dir()
     return singers
+
+
+@router.post("/stop")
+async def force_stop():
+    """Force stop any running render/convert process."""
+    wrapper = get_synth_wrapper()
+    stopped = await wrapper.force_stop()
+    return {"stopped": stopped}
 
 
 @router.get("/logs")

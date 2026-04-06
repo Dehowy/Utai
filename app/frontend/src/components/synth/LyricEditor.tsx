@@ -11,10 +11,16 @@ interface Props {
 export default function LyricEditor({ x, y, value, onConfirm, onCancel }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [text, setText] = useState(value);
+  const mounted = useRef(false);
 
   useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.select();
+    // Delay focus so the browser's mousedown focus handling settles first
+    const raf = requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.select();
+      mounted.current = true;
+    });
+    return () => cancelAnimationFrame(raf);
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -27,13 +33,19 @@ export default function LyricEditor({ x, y, value, onConfirm, onCancel }: Props)
     }
   };
 
+  const handleBlur = () => {
+    // Ignore blur that fires before the input is properly mounted/focused
+    if (!mounted.current) return;
+    onConfirm(text || 'a');
+  };
+
   return (
     <input
       ref={inputRef}
       value={text}
       onChange={e => setText(e.target.value)}
       onKeyDown={handleKeyDown}
-      onBlur={() => onConfirm(text || 'a')}
+      onBlur={handleBlur}
       className="utai-synth-lyric-input"
       style={{ left: x, top: y - 2 }}
     />

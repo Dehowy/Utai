@@ -1,7 +1,11 @@
-import { useCallback, useRef, useEffect } from 'react';
+import { useCallback, useRef, useEffect, useState } from 'react';
 import { useSynthStore } from '../../store/synthStore';
 import PianoRollToolbar from './PianoRollToolbar';
 import PianoRollCanvas from './PianoRollCanvas';
+import { KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
+
+const MIN_BARS = 8;
+const EXTEND_BARS = 8;
 
 export default function PianoRollPanel() {
   const selectedNotes = useSynthStore(s => s.selectedNotes);
@@ -17,13 +21,20 @@ export default function PianoRollPanel() {
 
   const scrollbarRef = useRef<HTMLDivElement>(null);
   const isUserScrolling = useRef(false);
+  const extendingRef = useRef(false);
 
-  // Calculate total content width based on project duration
-  const maxTick = project.voice_parts.reduce((max, p) => {
+  // Dynamic bar count — starts at MIN_BARS, extends by EXTEND_BARS when scrolled to end
+  const ts = project.time_signatures[0];
+  const ticksPerBar = 480 * (ts?.beat_per_bar ?? 4);
+  const contentMaxTick = project.voice_parts.reduce((max, p) => {
     const partEnd = p.position + p.duration;
     return Math.max(max, partEnd);
-  }, 480 * 32); // minimum 8 bars of 4/4
-  const totalWidth = maxTick * pixelsPerTick;
+  }, 0);
+  // At least cover content + a few bars of breathing room
+  const contentBars = Math.ceil(contentMaxTick / ticksPerBar) + 2;
+  const [extraBars, setExtraBars] = useState(MIN_BARS);
+  const visibleBars = Math.max(contentBars, extraBars);
+  const totalWidth = visibleBars * ticksPerBar * pixelsPerTick;
 
   // Sync store scrollX → scrollbar position
   useEffect(() => {
@@ -32,13 +43,45 @@ export default function PianoRollPanel() {
     el.scrollLeft = scrollX;
   }, [scrollX]);
 
-  // Scrollbar scroll → update store
+  // Extend when canvas wheel-scroll reaches near the end
+  useEffect(() => {
+    if (extendingRef.current) return;
+    const maxScrollX = totalWidth - (scrollbarRef.current?.clientWidth ?? 0);
+    if (maxScrollX > 0 && scrollX >= maxScrollX - 20) {
+      extendingRef.current = true;
+      setExtraBars(prev => prev + EXTEND_BARS);
+      setTimeout(() => { extendingRef.current = false; }, 350);
+    }
+  }, [scrollX, totalWidth]);
+
+  // Scrollbar scroll → update store + extend when near the end
   const onScroll = useCallback(() => {
     const el = scrollbarRef.current;
     if (!el) return;
     isUserScrolling.current = true;
     setViewState({ scrollX: el.scrollLeft });
-    // Reset flag after a tick
+    // If scrolled within 20px of the right edge: break drag → wait for mouseup → extend
+    const nearEnd = el.scrollWidth - el.scrollLeft - el.clientWidth < 20;
+    if (nearEnd && !extendingRef.current) {
+      extendingRef.current = true;
+      const savedScroll = el.scrollLeft;
+      // 1) Break drag immediately
+      el.style.overflowX = 'hidden';
+      requestAnimationFrame(() => {
+        el.style.overflowX = 'scroll';
+        el.scrollLeft = savedScroll;
+      });
+      // 2) Wait for mouseup then extend
+      const onUp = () => {
+        window.removeEventListener('mouseup', onUp);
+        setExtraBars(prev => prev + EXTEND_BARS);
+        requestAnimationFrame(() => {
+          el.scrollLeft = savedScroll;
+          extendingRef.current = false;
+        });
+      };
+      window.addEventListener('mouseup', onUp, { once: true });
+    }
     requestAnimationFrame(() => { isUserScrolling.current = false; });
   }, [setViewState]);
 
@@ -57,20 +100,19 @@ export default function PianoRollPanel() {
 
   return (
     <div className="utai-synth-piano" tabIndex={0} onKeyDown={onKeyDown}>
-      <PianoRollToolbar />
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <div style={{ flex: 1, minHeight: 0 }}>
-          <PianoRollCanvas />
-        </div>
-        {/* Horizontal scrollbar */}
+      <div className="utai-synth-piano__toolbar-row">
+        <PianoRollToolbar />
+        {/* Horizontal scrollbar — offset to align with piano roll grid area */}
         <div
           ref={scrollbarRef}
           className="utai-synth-hscroll"
+          style={{ marginLeft: KEYBOARD_W }}
           onScroll={onScroll}
         >
           <div style={{ width: totalWidth, height: 1 }} />
         </div>
       </div>
+      <PianoRollCanvas />
     </div>
   );
 }

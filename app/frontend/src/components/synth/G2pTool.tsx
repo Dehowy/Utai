@@ -2,9 +2,15 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 interface G2pWord { phonemes: string; }
 
+const G2P_LANGS = [
+  { code: 'en', label: 'EN' },
+  { code: 'zh', label: 'ZH' },
+  { code: 'ja', label: 'JA' },
+];
+
 export default function G2pTool() {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [text, setText] = useState('');
   const [lang, setLang] = useState('en');
   const [words, setWords] = useState<G2pWord[]>([]);
@@ -26,24 +32,47 @@ export default function G2pTool() {
 
   return (
     <div className="utai-synth-g2p">
-      <button className="utai-synth-logs__toggle" onClick={() => setOpen(!open)}>
-        {open ? '▼' : '▶'} {t('synth.g2p')}
-      </button>
+      {/* Header: toggle + title + lang switcher */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <button className="utai-synth-logs__toggle" style={{ flex: 1, textAlign: 'left' }} onClick={() => setOpen(!open)}>
+          {open ? '▼' : '▶'} {t('synth.g2p')}
+        </button>
+        <div className="utai-lang-switcher" style={{ height: 18 }}>
+          {G2P_LANGS.map(l => (
+            <button
+              key={l.code}
+              className={`utai-lang-switcher__item ${lang === l.code ? 'utai-lang-switcher__item--active' : ''}`}
+              style={{ lineHeight: '16px', fontSize: 9, padding: '0 6px' }}
+              onClick={() => setLang(l.code)}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      </div>
       {open && (
-        <div style={{ padding: 8 }}>
-          <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
-            <select value={lang} onChange={e => setLang(e.target.value)} style={{ fontSize: 11, background: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-mid)', fontFamily: 'var(--font-pixel)' }}>
-              <option value="en">EN</option>
-              <option value="zh">ZH</option>
-              <option value="ja">JA</option>
-            </select>
-            <input
-              value={text} onChange={e => setText(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleConvert()}
-              placeholder={t('synth.g2pPlaceholder')}
-              style={{ flex: 1, fontSize: 11, padding: '2px 6px', background: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-mid)', fontFamily: 'var(--font-pixel)' }}
-            />
-            <button className="utai-btn" style={{ fontSize: 10, padding: '2px 6px' }} onClick={handleConvert} disabled={loading}>
+        <div style={{ padding: '6px 8px 8px' }}>
+            <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleConvert(); } }}
+            placeholder={t('synth.g2pPlaceholder')}
+            rows={3}
+            style={{
+              width: '100%', boxSizing: 'border-box',
+              fontSize: 11, padding: '4px 6px', marginBottom: 4,
+              background: 'var(--bg-deep)', color: 'var(--text-primary)',
+              border: '1px solid var(--border-mid)', fontFamily: 'var(--font-pixel)',
+              resize: 'vertical', minHeight: 36,
+            }}
+          />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 6 }}>
+            <button
+              className="utai-btn"
+              style={{ fontSize: 10, padding: '2px 10px' }}
+              onClick={handleConvert}
+              disabled={loading}
+            >
               {loading ? '...' : t('synth.g2pConvert')}
             </button>
           </div>

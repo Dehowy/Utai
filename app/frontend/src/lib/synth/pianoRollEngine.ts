@@ -279,3 +279,8 @@ export function midiToScreen(midi: number, viewState: ViewState): number {
 export function snapTick(tick: number, snapTicks: number): number {
   return Math.round(tick / snapTicks) * snapTicks;
 }
+
+/** Snap to the grid line at or before the given tick (for note placement). */
+export function snapTickFloor(tick: number, snapTicks: number): number {
+  return Math.floor(tick / snapTicks) * snapTicks;
+}

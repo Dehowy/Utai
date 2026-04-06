@@ -110,9 +110,11 @@ async def startup_cleanup():
         logger.info(f"Startup cleanup: removed {cleaned}")
 
 
-# Serve static frontend (built React app) — only in production
-# In dev mode, Vite on port 8765 handles the frontend
-if not os.getenv("UTAI_DEV"):
+# Serve static frontend (built React app) — only in Electron / production
+# Requires UTAI_SERVE_STATIC=1 (set by Electron's main.js).
+# In dev mode, Vite on a separate port handles the frontend.
+# Direct backend access (http://localhost:8765) should NOT serve any UI.
+if os.getenv("UTAI_SERVE_STATIC") == "1":
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists() and any(static_dir.iterdir()):
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")

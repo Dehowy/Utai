@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, type ReactNode } from 'react';
+import { useState, useCallback, useRef, useEffect, type ReactNode } from 'react';
 
 interface Props {
   left: ReactNode;
@@ -17,7 +17,7 @@ export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props)
     document.body.style.userSelect = 'none';
   }, []);
 
-  const onMouseMove = useCallback((e: React.MouseEvent) => {
+  const onMouseMove = useCallback((e: MouseEvent) => {
     if (!dragging.current || !containerRef.current) return;
     const rect = containerRef.current.getBoundingClientRect();
     const pct = ((e.clientX - rect.left) / rect.width) * 100;
@@ -25,18 +25,26 @@ export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props)
   }, []);
 
   const onMouseUp = useCallback(() => {
+    if (!dragging.current) return;
     dragging.current = false;
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   }, []);
 
+  // Use global listeners so drag doesn't break when cursor escapes the container
+  useEffect(() => {
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, [onMouseMove, onMouseUp]);
+
   return (
     <div
       ref={containerRef}
       className="utai-synth-split"
-      onMouseMove={onMouseMove}
-      onMouseUp={onMouseUp}
-      onMouseLeave={onMouseUp}
     >
       <div style={{ width: `${leftWidth}%`, minWidth: 0, overflow: 'hidden', height: '100%' }}>
         {left}

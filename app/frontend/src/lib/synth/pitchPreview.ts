@@ -17,25 +17,33 @@ function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
-export function playNote(midi: number, duration = 0.15) {
+export function playNote(midi: number, duration?: number) {
   const ctx = getAudioContext();
+  // Resume suspended context (browsers require user gesture)
+  if (ctx.state === 'suspended') ctx.resume();
   stopNote();
 
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
 
-  osc.type = 'sine';
+  osc.type = 'triangle';
   osc.frequency.value = midiToFreq(midi);
 
+  // Volume: gentle compensation for low pitches (clamped 0.35–0.55)
+  const vol = Math.max(0.35, Math.min(0.55, 0.45 + (60 - midi) * 0.004));
+  // Duration: low notes need more cycles to sound pitched, not like a click
+  const dur = duration ?? Math.max(0.15, Math.min(0.4, 0.15 + (60 - midi) * 0.005));
+
   gain.gain.setValueAtTime(0, ctx.currentTime);
-  gain.gain.linearRampToValueAtTime(0.3, ctx.currentTime + 0.01);
-  gain.gain.linearRampToValueAtTime(0, ctx.currentTime + duration);
+  gain.gain.linearRampToValueAtTime(vol, ctx.currentTime + 0.01);
+  gain.gain.linearRampToValueAtTime(vol * 0.6, ctx.currentTime + dur * 0.7);
+  gain.gain.linearRampToValueAtTime(0, ctx.currentTime + dur);
 
   osc.connect(gain);
   gain.connect(ctx.destination);
 
   osc.start(ctx.currentTime);
-  osc.stop(ctx.currentTime + duration + 0.05);
+  osc.stop(ctx.currentTime + dur + 0.05);
 
   activeOsc = osc;
   activeGain = gain;
