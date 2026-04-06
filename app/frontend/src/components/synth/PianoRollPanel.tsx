@@ -2,6 +2,8 @@ import { useCallback, useRef, useEffect, useState } from 'react';
 import { useSynthStore } from '../../store/synthStore';
 import PianoRollToolbar from './PianoRollToolbar';
 import PianoRollCanvas from './PianoRollCanvas';
+import ArrangementView from './ArrangementView';
+import TransportBar from './TransportBar';
 import { KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
 
 const MIN_BARS = 8;
@@ -18,6 +20,8 @@ export default function PianoRollPanel() {
   const pixelsPerTick = useSynthStore(s => s.viewState.pixelsPerTick);
   const setViewState = useSynthStore(s => s.setViewState);
   const project = useSynthStore(s => s.project);
+  const isPlaying = useSynthStore(s => s.isPlaying);
+  const viewMode = useSynthStore(s => s.viewMode);
 
   const scrollbarRef = useRef<HTMLDivElement>(null);
   const isUserScrolling = useRef(false);
@@ -89,6 +93,18 @@ export default function PianoRollPanel() {
     if (e.key === '1') setTool('select');
     if (e.key === '2') setTool('draw');
     if (e.key === '3') setTool('erase');
+    if (e.key === ' ') {
+      e.preventDefault();
+      // Trigger transport play/pause — find and click the transport play button
+      const btn = document.querySelector('.utai-synth-transport__btn') as HTMLButtonElement;
+      if (btn) btn.click();
+    }
+    if (e.key === 'Home') {
+      e.preventDefault();
+      import('../../lib/synth/audioEngine').then(eng => { eng.stop(); });
+      useSynthStore.getState().setPlaying(false);
+      useSynthStore.getState().setPlaybackPosition(0);
+    }
     if (e.ctrlKey && e.key === 'z') { e.preventDefault(); undo(); }
     if (e.ctrlKey && e.key === 'y') { e.preventDefault(); redo(); }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNotes.size > 0) {
@@ -112,7 +128,8 @@ export default function PianoRollPanel() {
           <div style={{ width: totalWidth, height: 1 }} />
         </div>
       </div>
-      <PianoRollCanvas />
+      {viewMode === 'pianoroll' ? <PianoRollCanvas /> : <ArrangementView />}
+      <TransportBar />
     </div>
   );
 }

@@ -79,6 +79,7 @@ export interface UWavePart {
   trim: number;
   fadein: number;
   fadeout: number;
+  buffer_id?: string;  // backend audio buffer reference for imported audio
 }
 
 export interface UTempo {
@@ -106,6 +107,7 @@ export interface UExpressionDescriptor {
 export interface UTrack {
   track_name: string;
   track_color: string;
+  track_type?: 'vocal' | 'audio';  // defaults to 'vocal' for backward compat
   singer?: string;
   phonemizer?: string;
   mute: boolean;

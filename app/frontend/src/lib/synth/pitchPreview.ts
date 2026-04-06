@@ -1,17 +1,12 @@
 /** Simple pitch preview using Web Audio API oscillator.
  *  Plays a short sine tone at the given MIDI note frequency.
+ *  Uses the shared AudioContext from audioEngine.
  */
 
-let audioCtx: AudioContext | null = null;
+import { getAudioContext, resumeContext } from './audioEngine';
+
 let activeOsc: OscillatorNode | null = null;
 let activeGain: GainNode | null = null;
-
-function getAudioContext(): AudioContext {
-  if (!audioCtx) {
-    audioCtx = new AudioContext();
-  }
-  return audioCtx;
-}
 
 function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
@@ -19,8 +14,7 @@ function midiToFreq(midi: number): number {
 
 export function playNote(midi: number, duration?: number) {
   const ctx = getAudioContext();
-  // Resume suspended context (browsers require user gesture)
-  if (ctx.state === 'suspended') ctx.resume();
+  resumeContext();
   stopNote();
 
   const osc = ctx.createOscillator();
@@ -29,9 +23,7 @@ export function playNote(midi: number, duration?: number) {
   osc.type = 'triangle';
   osc.frequency.value = midiToFreq(midi);
 
-  // Volume: gentle compensation for low pitches (clamped 0.35–0.55)
   const vol = Math.max(0.35, Math.min(0.55, 0.45 + (60 - midi) * 0.004));
-  // Duration: low notes need more cycles to sound pitched, not like a click
   const dur = duration ?? Math.max(0.15, Math.min(0.4, 0.15 + (60 - midi) * 0.005));
 
   gain.gain.setValueAtTime(0, ctx.currentTime);

@@ -52,6 +52,7 @@ export default function PianoRollCanvas() {
       project: store.project, viewState: store.viewState,
       selectedNotes: store.selectedNotes, activePartIndex: store.activePartIndex,
       hoverMidi,
+      playheadTicks: store.isPlaying || store.playbackPositionTicks > 0 ? store.playbackPositionTicks : undefined,
     });
     // Draw ghost note preview
     if (ghostNote && !lyricEdit) {

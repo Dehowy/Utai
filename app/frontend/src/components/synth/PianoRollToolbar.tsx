@@ -3,14 +3,12 @@ import { useSynthStore, type Tool } from '../../store/synthStore';
 import { RESOLUTION } from '../../types/ustx';
 
 const SNAP_OPTIONS = [
-  // Standard subdivisions
   { label: '1/1', ticks: RESOLUTION * 4, group: 'std' },
   { label: '1/2', ticks: RESOLUTION * 2, group: 'std' },
   { label: '1/4', ticks: RESOLUTION, group: 'std' },
   { label: '1/8', ticks: RESOLUTION / 2, group: 'std' },
   { label: '1/16', ticks: RESOLUTION / 4, group: 'std' },
   { label: '1/32', ticks: RESOLUTION / 8, group: 'std' },
-  // Triplet subdivisions
   { label: '1/2T', ticks: Math.round(RESOLUTION * 4 / 3), group: 'tri' },
   { label: '1/4T', ticks: Math.round(RESOLUTION * 2 / 3), group: 'tri' },
   { label: '1/8T', ticks: Math.round(RESOLUTION / 3), group: 'tri' },
@@ -28,21 +26,45 @@ export default function PianoRollToolbar() {
   const { t } = useTranslation();
   const activeTool = useSynthStore(s => s.activeTool);
   const viewState = useSynthStore(s => s.viewState);
+  const viewMode = useSynthStore(s => s.viewMode);
   const undoStack = useSynthStore(s => s.undoStack);
   const redoStack = useSynthStore(s => s.redoStack);
   const setTool = useSynthStore(s => s.setTool);
   const setViewState = useSynthStore(s => s.setViewState);
+  const setViewMode = useSynthStore(s => s.setViewMode);
   const undo = useSynthStore(s => s.undo);
   const redo = useSynthStore(s => s.redo);
 
   return (
     <div className="utai-synth-piano__toolbar">
+      {/* View mode toggle */}
+      <button
+        className={`utai-btn ${viewMode === 'pianoroll' ? 'utai-btn--active' : ''}`}
+        onClick={() => setViewMode('pianoroll')}
+        title={t('synth.view.pianoroll')}
+        style={{ fontSize: 13 }}
+      >
+        ♫
+      </button>
+      <button
+        className={`utai-btn ${viewMode === 'arrangement' ? 'utai-btn--active' : ''}`}
+        onClick={() => setViewMode('arrangement')}
+        title={t('synth.view.arrangement')}
+        style={{ fontSize: 13 }}
+      >
+        ≡
+      </button>
+
+      <span style={{ color: 'var(--text-muted)' }}>|</span>
+
+      {/* Note tools (only relevant in piano roll mode, but always visible) */}
       {TOOLS.map(tool => (
         <button
           key={tool.id}
           className={`utai-btn ${activeTool === tool.id ? 'utai-btn--active' : ''}`}
           onClick={() => setTool(tool.id)}
           title={`${t(tool.labelKey)} (${tool.key})`}
+          disabled={viewMode === 'arrangement'}
         >
           {t(tool.labelKey)}
         </button>
@@ -72,20 +94,10 @@ export default function PianoRollToolbar() {
 
       <span style={{ color: 'var(--text-muted)' }}>|</span>
 
-      <button
-        className="utai-btn"
-        onClick={undo}
-        disabled={undoStack.length === 0}
-        title="Undo (Ctrl+Z)"
-      >
+      <button className="utai-btn" onClick={undo} disabled={undoStack.length === 0} title="Undo (Ctrl+Z)">
         {t('synth.undo')}
       </button>
-      <button
-        className="utai-btn"
-        onClick={redo}
-        disabled={redoStack.length === 0}
-        title="Redo (Ctrl+Y)"
-      >
+      <button className="utai-btn" onClick={redo} disabled={redoStack.length === 0} title="Redo (Ctrl+Y)">
         {t('synth.redo')}
       </button>
     </div>

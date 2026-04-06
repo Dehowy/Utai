@@ -191,3 +191,24 @@ async def audio_info(buffer_id: str):
         "duration": len(audio.samples) / audio.sample_rate,
         "channels": audio.samples.shape[1] if audio.samples.ndim == 2 else 1,
     }
+
+
+@router.get("/{buffer_id}/peaks")
+async def audio_peaks(buffer_id: str, width: int = 800):
+    """Get downsampled peak data for waveform visualization."""
+    audio = buffer_manager.get(buffer_id)
+    if audio is None:
+        raise HTTPException(status_code=404, detail="Audio buffer not found")
+
+    samples = audio.samples
+    if samples.ndim == 2:
+        samples = samples.mean(axis=1)  # mono mix
+
+    width = max(10, min(4000, width))
+    chunk_size = max(1, len(samples) // width)
+    peaks = []
+    for i in range(0, len(samples), chunk_size):
+        chunk = samples[i:i + chunk_size]
+        peaks.append(float(np.max(np.abs(chunk))))
+
+    return {"buffer_id": buffer_id, "peaks": peaks, "width": len(peaks)}

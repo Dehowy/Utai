@@ -2294,6 +2294,145 @@ input[type="checkbox"]:focus {
   background: rgba(155, 109, 255, 0.18);
 }
 
+/* --- Track Effects --- */
+.utai-synth-effects {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  padding: 8px;
+  min-width: 200px;
+}
+.utai-synth-effects__slot {
+  background: rgba(13, 13, 26, 0.6);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  padding: 6px;
+  margin-bottom: 4px;
+}
+
+/* --- Audio Import Dialog --- */
+.utai-synth-import-dialog {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  border-radius: 8px;
+  padding: 16px;
+  min-width: 280px;
+  text-align: center;
+}
+.utai-synth-import-dialog__title {
+  font-family: var(--font-pixel);
+  font-size: 13px;
+  color: var(--accent-purple);
+  margin-bottom: 12px;
+}
+.utai-synth-import-dialog__drop {
+  border: 2px dashed var(--border-mid);
+  border-radius: 6px;
+  padding: 24px 16px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  transition: border-color 0.2s;
+}
+.utai-synth-import-dialog__drop:hover {
+  border-color: var(--accent-purple);
+}
+
+/* --- Arrangement View --- */
+.utai-synth-arrangement__actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-deep);
+  border-bottom: 1px solid var(--border-dim);
+}
+.utai-synth-arrangement__action-btn {
+  font-family: var(--font-pixel);
+  font-size: 10px;
+  padding: 2px 8px;
+  background: rgba(155, 109, 255, 0.08);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.utai-synth-arrangement__action-btn:hover {
+  background: rgba(155, 109, 255, 0.2);
+  color: #fff;
+}
+
+/* --- Transport Bar --- */
+.utai-synth-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0 8px;
+  background: var(--bg-deep);
+  border-top: 1px solid var(--border-dim);
+}
+.utai-synth-transport__controls {
+  display: flex;
+  gap: 3px;
+}
+.utai-synth-transport__btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(155, 109, 255, 0.08);
+  border: 1px solid var(--border-dim);
+  border-radius: 3px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.15s;
+}
+.utai-synth-transport__btn:hover {
+  background: rgba(155, 109, 255, 0.2);
+  color: #fff;
+}
+.utai-synth-transport__btn--active {
+  color: var(--accent-pink);
+  border-color: var(--accent-pink);
+  background: rgba(255, 107, 157, 0.12);
+}
+.utai-synth-transport__position {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+  min-width: 80px;
+}
+.utai-synth-transport__pos-main {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: #e0e0ff;
+  letter-spacing: 1px;
+}
+.utai-synth-transport__pos-time {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.utai-synth-transport__bpm {
+  font-family: var(--font-pixel);
+  font-size: 12px;
+  color: var(--accent-purple);
+  min-width: 50px;
+}
+.utai-synth-transport__wave {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(13, 13, 26, 0.6);
+}
+
 /* Hide number input spinner arrows */
 .utai-synth-no-spin {
   -moz-appearance: textfield;

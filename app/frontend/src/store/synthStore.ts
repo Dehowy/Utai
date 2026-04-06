@@ -3,7 +3,8 @@
  */
 
 import { create } from 'zustand';
-import type { UProject, UNote } from '../types/ustx';
+import type { UProject, UNote, UWavePart } from '../types/ustx';
+import type { TrackEffect } from '../lib/synth/effects';
 import { RESOLUTION } from '../types/ustx';
 import { createDefaultProject } from '../lib/synth/ustx';
 import type { ViewState } from '../lib/synth/pianoRollEngine';
@@ -59,6 +60,16 @@ interface SynthState {
   finalUrl: string | null;
   renderError: string;
 
+  // Transport
+  viewMode: 'pianoroll' | 'arrangement';
+  isPlaying: boolean;
+  playbackPositionTicks: number;
+  loopEnabled: boolean;
+  loopStart: number;
+  loopEnd: number;
+  trackAudioUrls: Record<number, string>;  // trackIndex → rendered blob URL
+  trackEffects: Record<number, TrackEffect[]>;  // trackIndex → effect chain
+
   // Actions - Project
   loadProject: (project: UProject) => void;
   newProject: () => void;
@@ -96,6 +107,29 @@ interface SynthState {
   setFinalUrl: (url: string | null) => void;
   setRenderError: (error: string) => void;
 
+  // Actions - Transport
+  setViewMode: (mode: 'pianoroll' | 'arrangement') => void;
+  setPlaying: (playing: boolean) => void;
+  setPlaybackPosition: (ticks: number) => void;
+  toggleLoop: () => void;
+  setLoopRange: (start: number, end: number) => void;
+  setTrackAudioUrl: (trackIndex: number, url: string) => void;
+
+  // Actions - Track management
+  addTrack: (type: 'vocal' | 'audio', name?: string) => void;
+  removeTrack: (trackIndex: number) => void;
+  setTrackMute: (trackIndex: number, mute: boolean) => void;
+  setTrackSolo: (trackIndex: number, solo: boolean) => void;
+  setTrackVolume: (trackIndex: number, volume: number) => void;
+  setTrackPan: (trackIndex: number, pan: number) => void;
+  addWavePart: (trackNo: number, wavePart: UWavePart) => void;
+  moveWavePart: (partIndex: number, newPosition: number) => void;
+
+  // Actions - Effects
+  addEffect: (trackIndex: number, effect: TrackEffect) => void;
+  removeEffect: (trackIndex: number, effectIndex: number) => void;
+  updateEffectParams: (trackIndex: number, effectIndex: number, params: Record<string, number>) => void;
+
   // Actions - Undo/Redo
   undo: () => void;
   redo: () => void;
@@ -131,6 +165,14 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   renderedUrl: null,
   finalUrl: null,
   renderError: '',
+  viewMode: 'pianoroll',
+  isPlaying: false,
+  playbackPositionTicks: 0,
+  loopEnabled: false,
+  loopStart: 0,
+  loopEnd: 0,
+  trackAudioUrls: {},
+  trackEffects: {},
 
   // Project actions
   loadProject: (project) => set({
@@ -292,6 +334,122 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   setRenderedUrl: (url) => set({ renderedUrl: url }),
   setFinalUrl: (url) => set({ finalUrl: url }),
   setRenderError: (error) => set({ renderError: error }),
+
+  // Transport actions
+  setViewMode: (mode) => set({ viewMode: mode }),
+  setPlaying: (playing) => set({ isPlaying: playing }),
+  setPlaybackPosition: (ticks) => set({ playbackPositionTicks: ticks }),
+  toggleLoop: () => set((state) => ({ loopEnabled: !state.loopEnabled })),
+  setLoopRange: (start, end) => set({ loopStart: start, loopEnd: end }),
+  setTrackAudioUrl: (trackIndex, url) => set((state) => ({
+    trackAudioUrls: { ...state.trackAudioUrls, [trackIndex]: url },
+  })),
+
+  // Track management
+  addTrack: (type, name) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const idx = project.tracks.length;
+    const colors = ['Blue', 'Pink', 'Green', 'Yellow', 'Purple', 'Orange'];
+    project.tracks.push({
+      track_name: name || `Track ${idx + 1}`,
+      track_color: colors[idx % colors.length],
+      track_type: type,
+      mute: false, solo: false, volume: 0, pan: 0,
+      voice_color_names: [''],
+    });
+    if (type === 'vocal') {
+      project.voice_parts.push({
+        name: `Part ${idx + 1}`,
+        comment: '',
+        track_no: idx,
+        position: 0,
+        duration: RESOLUTION * 16,
+        notes: [],
+        curves: [],
+      });
+    }
+    return { ...stacks, project, dirty: true };
+  }),
+
+  removeTrack: (trackIndex) => set((state) => {
+    if (state.project.tracks.length <= 1) return state;
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.tracks.splice(trackIndex, 1);
+    project.voice_parts = project.voice_parts.filter(vp => vp.track_no !== trackIndex)
+      .map(vp => ({ ...vp, track_no: vp.track_no > trackIndex ? vp.track_no - 1 : vp.track_no }));
+    project.wave_parts = project.wave_parts.filter(wp => wp.track_no !== trackIndex)
+      .map(wp => ({ ...wp, track_no: wp.track_no > trackIndex ? wp.track_no - 1 : wp.track_no }));
+    const newPartIdx = Math.min(state.activePartIndex, project.voice_parts.length - 1);
+    return { ...stacks, project, dirty: true, activePartIndex: Math.max(0, newPartIdx) };
+  }),
+
+  setTrackMute: (trackIndex, mute) => set((state) => {
+    const project = cloneProject(state.project);
+    if (project.tracks[trackIndex]) project.tracks[trackIndex].mute = mute;
+    return { project };
+  }),
+
+  setTrackSolo: (trackIndex, solo) => set((state) => {
+    const project = cloneProject(state.project);
+    if (project.tracks[trackIndex]) project.tracks[trackIndex].solo = solo;
+    return { project };
+  }),
+
+  setTrackVolume: (trackIndex, volume) => set((state) => {
+    const project = cloneProject(state.project);
+    if (project.tracks[trackIndex]) project.tracks[trackIndex].volume = volume;
+    return { project };
+  }),
+
+  setTrackPan: (trackIndex, pan) => set((state) => {
+    const project = cloneProject(state.project);
+    if (project.tracks[trackIndex]) project.tracks[trackIndex].pan = pan;
+    return { project };
+  }),
+
+  addWavePart: (trackNo, wavePart) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.wave_parts.push({ ...wavePart, track_no: trackNo });
+    return { ...stacks, project, dirty: true };
+  }),
+
+  moveWavePart: (partIndex, newPosition) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    if (project.wave_parts[partIndex]) {
+      project.wave_parts[partIndex].position = Math.max(0, newPosition);
+    }
+    return { ...stacks, project, dirty: true };
+  }),
+
+  // Effects
+  addEffect: (trackIndex, effect) => set((state) => ({
+    trackEffects: {
+      ...state.trackEffects,
+      [trackIndex]: [...(state.trackEffects[trackIndex] || []), effect],
+    },
+  })),
+
+  removeEffect: (trackIndex, effectIndex) => set((state) => {
+    const chain = [...(state.trackEffects[trackIndex] || [])];
+    chain.splice(effectIndex, 1);
+    return { trackEffects: { ...state.trackEffects, [trackIndex]: chain } };
+  }),
+
+  updateEffectParams: (trackIndex, effectIndex, params) => set((state) => {
+    const chain = [...(state.trackEffects[trackIndex] || [])];
+    if (!chain[effectIndex]) return state;
+    // Handle _enabled toggle
+    if ('_enabled' in params) {
+      chain[effectIndex] = { ...chain[effectIndex], enabled: params._enabled !== 0 };
+    } else {
+      chain[effectIndex] = { ...chain[effectIndex], params: { ...chain[effectIndex].params, ...params } };
+    }
+    return { trackEffects: { ...state.trackEffects, [trackIndex]: chain } };
+  }),
 
   // Undo/Redo
   undo: () => set((state) => {

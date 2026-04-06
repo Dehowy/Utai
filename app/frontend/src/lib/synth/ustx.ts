@@ -67,6 +67,7 @@ function parseTrack(raw: any): UTrack {
   return {
     track_name: raw.track_name ?? 'Track1',
     track_color: raw.track_color ?? 'Blue',
+    track_type: raw.track_type ?? 'vocal',
     singer: raw.singer ?? undefined,
     phonemizer: raw.phonemizer ?? undefined,
     mute: raw.mute ?? false,

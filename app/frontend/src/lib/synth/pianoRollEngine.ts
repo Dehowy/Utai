@@ -29,6 +29,7 @@ export interface RenderContext {
   selectedNotes: Set<string>;
   activePartIndex: number;
   hoverMidi: number | null;
+  playheadTicks?: number;  // if >= 0, draw playhead line
 }
 
 /** Main render function — call on every frame. */
@@ -42,8 +43,27 @@ export function renderPianoRoll(rc: RenderContext) {
   drawGrid(rc);
   drawHoverRow(rc);
   drawNotes(rc);
+  drawPlayhead(rc);
   drawKeyboard(rc);
   drawHeader(rc);
+}
+
+function drawPlayhead(rc: RenderContext) {
+  const { ctx, height, viewState } = rc;
+  const ticks = rc.playheadTicks;
+  if (ticks == null || ticks < 0) return;
+  const x = KEYBOARD_WIDTH + ticks * viewState.pixelsPerTick - viewState.scrollX;
+  if (x < KEYBOARD_WIDTH || x > rc.width) return;
+  ctx.save();
+  ctx.strokeStyle = '#ff6b9d';
+  ctx.lineWidth = 2;
+  ctx.shadowColor = '#ff6b9d';
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(x, HEADER_HEIGHT);
+  ctx.lineTo(x, height);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawGrid(rc: RenderContext) {
