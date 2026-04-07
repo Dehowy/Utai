@@ -16,12 +16,6 @@ export const SNAP_OPTIONS = [
   { label: '1/32T', ticks: Math.round(RESOLUTION / 12), group: 'tri' },
 ];
 
-const TOOLS: { id: Tool; key: string; labelKey: string }[] = [
-  { id: 'select', key: '1', labelKey: 'synth.tool.select' },
-  { id: 'draw', key: '2', labelKey: 'synth.tool.draw' },
-  { id: 'erase', key: '3', labelKey: 'synth.tool.erase' },
-];
-
 export default function PianoRollToolbar() {
   const { t } = useTranslation();
   const activeTool = useSynthStore(s => s.activeTool);
@@ -35,69 +29,94 @@ export default function PianoRollToolbar() {
   const undo = useSynthStore(s => s.undo);
   const redo = useSynthStore(s => s.redo);
 
+  const isArr = viewMode === 'arrangement';
+
+  // View mode button style
+  const viewBtnStyle = (active: boolean) => ({
+    fontSize: 13,
+    padding: '2px 8px',
+    borderColor: active ? 'var(--accent-purple)' : 'var(--border-dim)',
+    color: active ? 'var(--accent-purple)' : 'var(--text-dim)',
+    background: active ? 'rgba(155, 109, 255, 0.12)' : 'transparent',
+  });
+
+  // Tool button style — different highlight per tool
+  const toolColors: Record<Tool, string> = {
+    select: '#5ce0d8',  // cyan
+    draw: '#9b6dff',    // purple
+    erase: '#ff6b9d',   // pink
+  };
+  const toolBtnStyle = (id: Tool, active: boolean) => ({
+    padding: '2px 8px',
+    fontSize: 11,
+    borderColor: active ? toolColors[id] : 'var(--border-dim)',
+    color: active ? toolColors[id] : 'var(--text-dim)',
+    background: active ? `${toolColors[id]}18` : 'transparent',
+    opacity: 1,
+  });
+
   return (
     <div className="utai-synth-piano__toolbar">
       {/* View mode toggle */}
-      <button
-        className={`utai-btn ${viewMode === 'pianoroll' ? 'utai-btn--active' : ''}`}
-        onClick={() => setViewMode('pianoroll')}
-        title={t('synth.view.pianoroll')}
-        style={{ fontSize: 13 }}
-      >
+      <button className="utai-btn" onClick={() => setViewMode('pianoroll')} title={t('synth.view.pianoroll')} style={viewBtnStyle(!isArr)}>
         ♫
       </button>
-      <button
-        className={`utai-btn ${viewMode === 'arrangement' ? 'utai-btn--active' : ''}`}
-        onClick={() => setViewMode('arrangement')}
-        title={t('synth.view.arrangement')}
-        style={{ fontSize: 13 }}
-      >
+      <button className="utai-btn" onClick={() => setViewMode('arrangement')} title={t('synth.view.arrangement')} style={viewBtnStyle(isArr)}>
         ≡
       </button>
 
-      <span style={{ color: 'var(--text-muted)' }}>|</span>
+      <span style={{ color: 'var(--border-dim)', margin: '0 2px' }}>|</span>
 
-      {/* Note tools (only relevant in piano roll mode, but always visible) */}
-      {TOOLS.map(tool => (
+      {/* Tools — labels change based on view mode */}
+      {(['select', 'draw', 'erase'] as Tool[]).map((id, i) => (
         <button
-          key={tool.id}
-          className={`utai-btn ${activeTool === tool.id ? 'utai-btn--active' : ''}`}
-          onClick={() => setTool(tool.id)}
-          title={`${t(tool.labelKey)} (${tool.key})`}
-          disabled={viewMode === 'arrangement'}
+          key={id}
+          className="utai-btn"
+          onClick={() => setTool(id)}
+          title={`(${i + 1})`}
+          style={toolBtnStyle(id, activeTool === id)}
         >
-          {t(tool.labelKey)}
+          {t(isArr
+            ? (id === 'select' ? 'synth.arr.select' : id === 'draw' ? 'synth.arr.create' : 'synth.arr.delete')
+            : `synth.tool.${id}`
+          )}
         </button>
       ))}
 
-      <span style={{ color: 'var(--text-muted)' }}>|</span>
+      <span style={{ color: 'var(--border-dim)', margin: '0 2px' }}>|</span>
 
-      <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontFamily: 'var(--font-pixel)', fontSize: 11 }}>
-        {t('synth.noteType')}:
-        <select
-          value={viewState.snapTicks}
-          onChange={e => setViewState({ snapTicks: Number(e.target.value) })}
-          style={{ background: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-mid)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '1px 4px' }}
-        >
-          <optgroup label="Standard">
-            {SNAP_OPTIONS.filter(s => s.group === 'std').map(s => (
-              <option key={s.ticks} value={s.ticks}>{s.label}</option>
-            ))}
-          </optgroup>
-          <optgroup label="Triplet">
-            {SNAP_OPTIONS.filter(s => s.group === 'tri').map(s => (
-              <option key={s.ticks} value={s.ticks}>{s.label}</option>
-            ))}
-          </optgroup>
-        </select>
-      </label>
+      {/* Note type (only in piano roll) */}
+      {!isArr && (
+        <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-dim)', fontFamily: 'var(--font-pixel)', fontSize: 11 }}>
+            {t('synth.noteType')}:
+            <select
+              value={viewState.snapTicks}
+              onChange={e => setViewState({ snapTicks: Number(e.target.value) })}
+              style={{ background: 'var(--bg-deep)', color: 'var(--text-primary)', border: '1px solid var(--border-dim)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '1px 4px' }}
+            >
+              <optgroup label="Standard">
+                {SNAP_OPTIONS.filter(s => s.group === 'std').map(s => (
+                  <option key={s.ticks} value={s.ticks}>{s.label}</option>
+                ))}
+              </optgroup>
+              <optgroup label="Triplet">
+                {SNAP_OPTIONS.filter(s => s.group === 'tri').map(s => (
+                  <option key={s.ticks} value={s.ticks}>{s.label}</option>
+                ))}
+              </optgroup>
+            </select>
+          </label>
+          <span style={{ color: 'var(--border-dim)', margin: '0 2px' }}>|</span>
+        </>
+      )}
 
-      <span style={{ color: 'var(--text-muted)' }}>|</span>
-
-      <button className="utai-btn" onClick={undo} disabled={undoStack.length === 0} title="Undo (Ctrl+Z)">
+      <button className="utai-btn" onClick={undo} disabled={undoStack.length === 0} title="Undo (Ctrl+Z)"
+        style={{ fontSize: 11, padding: '2px 8px', borderColor: 'var(--border-dim)', color: undoStack.length ? 'var(--text-secondary)' : 'var(--text-dim)' }}>
         {t('synth.undo')}
       </button>
-      <button className="utai-btn" onClick={redo} disabled={redoStack.length === 0} title="Redo (Ctrl+Y)">
+      <button className="utai-btn" onClick={redo} disabled={redoStack.length === 0} title="Redo (Ctrl+Y)"
+        style={{ fontSize: 11, padding: '2px 8px', borderColor: 'var(--border-dim)', color: redoStack.length ? 'var(--text-secondary)' : 'var(--text-dim)' }}>
         {t('synth.redo')}
       </button>
     </div>

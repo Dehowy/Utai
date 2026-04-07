@@ -60,16 +60,17 @@ export default function SynthPage() {
 
         <SynthProjectMenu />
 
-        <button className="utai-btn utai-btn--load" onClick={() => setModelManagerOpen(true)}>
+        <button className="utai-btn" onClick={() => setModelManagerOpen(true)}
+          style={{ borderColor: 'var(--accent-gold)', color: 'var(--accent-gold)', fontSize: 11 }}>
           {t('toolbar.models')}
         </button>
 
         <div style={{ flex: 1 }} />
 
-        <Link to="/" className="utai-btn utai-btn--load" style={{ textDecoration: 'none', fontSize: 11 }}>
+        <Link to="/" className="utai-btn" style={{ textDecoration: 'none', fontSize: 11, borderColor: 'var(--accent-green)', color: 'var(--accent-green)' }}>
           {t('synth.backToWorkflow')}
         </Link>
-        <Link to="/train" className="utai-btn utai-btn--save" style={{ textDecoration: 'none', fontSize: 11 }}>
+        <Link to="/train" className="utai-btn" style={{ textDecoration: 'none', fontSize: 11, borderColor: 'var(--accent-pink)', color: 'var(--accent-pink)' }}>
           {t('toolbar.training')}
         </Link>
 

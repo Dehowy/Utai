@@ -98,6 +98,18 @@ interface SynthState {
   setActivePart: (partIndex: number) => void;
   setActiveInstrumentPart: (partIndex: number) => void;
 
+  // Actions - Segments (arrangement view)
+  selectedSegment: { type: 'voice' | 'instrument'; index: number } | null;
+  setSelectedSegment: (seg: { type: 'voice' | 'instrument'; index: number } | null) => void;
+  splitVoicePart: (partIndex: number, splitTick: number) => void;
+  deleteVoicePart: (partIndex: number) => void;
+  moveVoicePart: (partIndex: number, deltaTicks: number) => void;
+  addVoicePartOnTrack: (trackNo: number, position: number) => void;
+  splitInstrumentPart: (partIndex: number, splitTick: number) => void;
+  deleteInstrumentPart: (partIndex: number) => void;
+  moveInstrumentPart: (partIndex: number, deltaTicks: number) => void;
+  addInstrumentPartOnTrack: (trackNo: number, position: number) => void;
+
   // Actions - Models
   setSingerModel: (singer: string) => void;
   setRvcModel: (model: string) => void;
@@ -159,9 +171,10 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   undoStack: [],
   redoStack: [],
   selectedNotes: new Set<string>(),
-  activeTool: 'draw' as Tool,
+  activeTool: 'select' as Tool,
   activePartIndex: 0,
   activeInstrumentPartIndex: -1,
+  selectedSegment: null,
   viewState: {
     scrollX: 0,
     scrollY: 60 * 20 - 200,
@@ -176,7 +189,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   renderedUrl: null,
   finalUrl: null,
   renderError: '',
-  viewMode: 'pianoroll',
+  viewMode: 'arrangement',
   isPlaying: false,
   playbackPositionTicks: 0,
   loopEnabled: false,
@@ -202,6 +215,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     selectedNotes: new Set(),
     activePartIndex: 0,
   activeInstrumentPartIndex: -1,
+  selectedSegment: null,
     renderedUrl: null,
     finalUrl: null,
     renderError: '',
@@ -334,6 +348,116 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   clearSelection: () => set({ selectedNotes: new Set() }),
   setActivePart: (partIndex) => set({ activePartIndex: partIndex, activeInstrumentPartIndex: -1 }),
   setActiveInstrumentPart: (partIndex) => set({ activeInstrumentPartIndex: partIndex }),
+
+  // Segment management
+  setSelectedSegment: (seg) => set({ selectedSegment: seg }),
+
+  splitVoicePart: (partIndex, splitTick) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.voice_parts[partIndex];
+    if (!part) return state;
+    const relSplit = splitTick - part.position;
+    if (relSplit <= 0 || relSplit >= part.duration) return state;
+
+    // Part A: notes before split
+    const notesA = part.notes.filter(n => n.position < relSplit);
+    // Part B: notes at/after split (positions shifted)
+    const notesB = part.notes.filter(n => n.position >= relSplit)
+      .map(n => ({ ...n, position: n.position - relSplit }));
+
+    const partB = {
+      name: part.name + ' (B)',
+      comment: '',
+      track_no: part.track_no,
+      position: splitTick,
+      duration: part.duration - relSplit,
+      notes: notesB,
+      curves: [],
+    };
+    part.notes = notesA;
+    part.duration = relSplit;
+    project.voice_parts.splice(partIndex + 1, 0, partB);
+    return { ...stacks, project, dirty: true };
+  }),
+
+  deleteVoicePart: (partIndex) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.voice_parts.splice(partIndex, 1);
+    const newActive = Math.min(state.activePartIndex, project.voice_parts.length - 1);
+    return { ...stacks, project, dirty: true, activePartIndex: Math.max(0, newActive), selectedSegment: null };
+  }),
+
+  moveVoicePart: (partIndex, deltaTicks) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.voice_parts[partIndex];
+    if (part) part.position = Math.max(0, part.position + deltaTicks);
+    return { ...stacks, project, dirty: true };
+  }),
+
+  addVoicePartOnTrack: (trackNo, position) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.voice_parts.push({
+      name: `Part ${project.voice_parts.length + 1}`,
+      comment: '',
+      track_no: trackNo,
+      position,
+      duration: RESOLUTION * 16,
+      notes: [],
+      curves: [],
+    });
+    return { ...stacks, project, dirty: true };
+  }),
+
+  splitInstrumentPart: (partIndex, splitTick) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.instrument_parts[partIndex];
+    if (!part) return state;
+    const relSplit = splitTick - part.position;
+    if (relSplit <= 0 || relSplit >= part.duration) return state;
+
+    const notesA = part.notes.filter(n => n.position < relSplit);
+    const notesB = part.notes.filter(n => n.position >= relSplit)
+      .map(n => ({ ...n, position: n.position - relSplit }));
+
+    const partB = { name: part.name + ' (B)', track_no: part.track_no, position: splitTick, duration: part.duration - relSplit, notes: notesB };
+    part.notes = notesA;
+    part.duration = relSplit;
+    project.instrument_parts.splice(partIndex + 1, 0, partB);
+    return { ...stacks, project, dirty: true };
+  }),
+
+  deleteInstrumentPart: (partIndex) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.instrument_parts.splice(partIndex, 1);
+    return { ...stacks, project, dirty: true, activeInstrumentPartIndex: -1, selectedSegment: null };
+  }),
+
+  moveInstrumentPart: (partIndex, deltaTicks) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.instrument_parts[partIndex];
+    if (part) part.position = Math.max(0, part.position + deltaTicks);
+    return { ...stacks, project, dirty: true };
+  }),
+
+  addInstrumentPartOnTrack: (trackNo, position) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    project.instrument_parts.push({
+      name: `Inst ${project.instrument_parts.length + 1}`,
+      track_no: trackNo,
+      position,
+      duration: RESOLUTION * 16,
+      notes: [],
+    });
+    return { ...stacks, project, dirty: true };
+  }),
 
   // Model actions
   setSingerModel: (singer) => set({ singer }),

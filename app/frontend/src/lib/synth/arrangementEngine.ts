@@ -20,7 +20,8 @@ export interface ArrangementRenderContext {
   viewState: ViewState;
   activePartIndex: number;
   playheadTicks?: number;
-  peakData?: Map<string, Float32Array>; // buffer_id → peak data
+  peakData?: Map<string, Float32Array>;
+  selectedSegment?: { type: 'voice' | 'instrument'; index: number } | null;
 }
 
 export function renderArrangement(rc: ArrangementRenderContext) {
@@ -179,16 +180,17 @@ function drawVoiceParts(rc: ArrangementRenderContext) {
     if (x + w < TRACK_HEADER_W || x > rc.width) return;
 
     const isActive = vpIdx === activePartIndex;
+    const isSelected = rc.selectedSegment?.type === 'voice' && rc.selectedSegment.index === vpIdx;
 
     // Part block
     ctx.fillStyle = color;
-    ctx.globalAlpha = isActive ? 0.35 : 0.2;
+    ctx.globalAlpha = isSelected ? 0.45 : isActive ? 0.35 : 0.2;
     ctx.fillRect(x, y + 4, w, TRACK_LANE_H - 8);
     ctx.globalAlpha = 1;
 
     // Border
-    ctx.strokeStyle = color;
-    ctx.lineWidth = isActive ? 2 : 1;
+    ctx.strokeStyle = isSelected ? '#f0f0ff' : color;
+    ctx.lineWidth = isSelected ? 2 : isActive ? 2 : 1;
     ctx.strokeRect(x, y + 4, w, TRACK_LANE_H - 8);
 
     // Mini note visualization

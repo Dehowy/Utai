@@ -74,6 +74,9 @@ VST/AmpleBass/
 VST/AmpleGuitar/
 VST/MTPDK*/
 VST/Sonatina_*/
+VST/Dexed*/
+VST/*.clap
+VST/*.exe
 # Imported plugins (generated on import — user-specific)
 VST/instruments/*/
 # JUCE framework (cloned separately)
