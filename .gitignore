@@ -76,6 +76,11 @@ VST/MTPDK*/
 VST/Sonatina_*/
 # Imported plugins (generated on import — user-specific)
 VST/instruments/*/
+# JUCE framework (cloned separately)
+VST/juce/
+# JUCE host build artifacts
+VST/host/build/
+VST/host/UtaiVSTHost.exe
 
 # Synth (UtaiSynth — DiffSinger + OpenUtau integration)
 # Pre-compiled renderer binaries (large, platform-specific, rebuild from utai-renderer-src/)

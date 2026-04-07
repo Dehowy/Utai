@@ -311,16 +311,25 @@ def open_editor(name: str) -> dict:
         raise FileNotFoundError(f"Plugin DLL not found: {dll_path}")
 
     state_path = str(plugin_dir / "state.bin")
-    editor_script = str(PROJECT_ROOT / "app" / "backend" / "wrappers" / "vst_editor.py")
+    ext = Path(dll_path).suffix.lower()
 
-    # Use pythonw.exe for GUI (no console window)
-    python_exe = Path(sys.executable)
-    pythonw = python_exe.parent / "pythonw.exe"
-    if not pythonw.exists():
-        pythonw = python_exe  # fallback to python.exe
+    if ext == ".dll":
+        # VST2: Python ctypes host via vst_editor.py
+        editor_script = str(PROJECT_ROOT / "app" / "backend" / "wrappers" / "vst_editor.py")
+        python_exe = Path(sys.executable)
+        pythonw = python_exe.parent / "pythonw.exe"
+        if not pythonw.exists():
+            pythonw = python_exe
+        cmd = [str(pythonw), editor_script, dll_path, state_path]
+    else:
+        # VST3: JUCE host exe
+        juce_exe = PROJECT_ROOT / "VST" / "host" / "UtaiVSTHost.exe"
+        if not juce_exe.exists():
+            raise FileNotFoundError("JUCE VST host not found. Build VST/host/ first.")
+        cmd = [str(juce_exe), dll_path, state_path]
 
     proc = subprocess.Popen(
-        [str(pythonw), editor_script, dll_path, state_path],
+        cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         cwd=str(PROJECT_ROOT),
