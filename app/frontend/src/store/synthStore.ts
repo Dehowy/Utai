@@ -181,6 +181,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     pixelsPerTick: 0.15,
     pixelsPerSemitone: 20,
     snapTicks: RESOLUTION / 4,
+    trackLaneHeight: 64,
   },
   singer: '',
   rvcModel: '',

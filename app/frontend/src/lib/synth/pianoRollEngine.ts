@@ -18,6 +18,7 @@ export interface ViewState {
   pixelsPerTick: number;
   pixelsPerSemitone: number;
   snapTicks: number;
+  trackLaneHeight: number;
 }
 
 export interface RenderContext {

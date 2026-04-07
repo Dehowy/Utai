@@ -16,7 +16,7 @@ export default function SynthPage() {
   const [modelManagerOpen, setModelManagerOpen] = useState(false)
   const viewMode = useSynthStore(s => s.viewMode)
 
-  // Global keyboard shortcuts for synth page (gated on pathname for keep-alive)
+  // Global keyboard shortcuts + block browser defaults on synth page
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (window.location.pathname !== '/synth') return
@@ -34,13 +34,32 @@ export default function SynthPage() {
         const playBtn = document.querySelector('.utai-synth-transport__btn') as HTMLButtonElement | null
         if (playBtn) playBtn.click()
       }
+      // Block browser shortcuts that interfere with DAW
+      if (e.ctrlKey || e.metaKey) {
+        if ('=-+dfghp'.includes(e.key.toLowerCase())) e.preventDefault()
+      }
+      if (e.key === 'Backspace') e.preventDefault()
+    }
+    // Block browser zoom on Ctrl/Alt+wheel anywhere on synth page
+    const wheelHandler = (e: WheelEvent) => {
+      if (window.location.pathname !== '/synth') return
+      if (e.ctrlKey || e.metaKey || e.altKey) e.preventDefault()
     }
     window.addEventListener('keydown', handler)
-    return () => window.removeEventListener('keydown', handler)
+    window.addEventListener('wheel', wheelHandler, { passive: false })
+    return () => {
+      window.removeEventListener('keydown', handler)
+      window.removeEventListener('wheel', wheelHandler)
+    }
   }, [])
 
   return (
-    <div className="utai-synth-page">
+    <div className="utai-synth-page"
+      onContextMenu={e => e.preventDefault()}
+      onDragStart={e => e.preventDefault()}
+      onMouseDown={e => { if (e.button === 1) e.preventDefault(); }}
+      style={{ userSelect: 'none' }}
+    >
       {/* Toolbar */}
       <div className="utai-synth-toolbar">
         <span className="utai-logo">

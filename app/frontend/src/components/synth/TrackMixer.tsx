@@ -11,6 +11,7 @@ export default function TrackMixer() {
   const setTrackPan = useSynthStore(s => s.setTrackPan);
   const setTrackMute = useSynthStore(s => s.setTrackMute);
   const setTrackSolo = useSynthStore(s => s.setTrackSolo);
+  const trackLaneHeight = useSynthStore(s => s.viewState.trackLaneHeight) ?? TRACK_LANE_H;
 
   return (
     <div style={{
@@ -26,7 +27,7 @@ export default function TrackMixer() {
 
         return (
           <div key={idx} style={{
-            height: TRACK_LANE_H,
+            height: trackLaneHeight,
             borderBottom: '1px solid #1e1e3a',
             padding: '4px 4px 4px 7px',
             display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
@@ -61,17 +62,23 @@ export default function TrackMixer() {
             {/* Row 2: Volume */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <span style={{ fontSize: 7, color: '#4a4a6a', width: 16 }}>Vol</span>
-              <div style={{ flex: 1, position: 'relative', height: 6 }}>
-                <div style={{ position: 'absolute', top: 2, left: 0, right: 0, height: 2, background: '#2a2a4a', borderRadius: 1 }} />
+              <div style={{ flex: 1, position: 'relative', height: 8 }}>
+                <div style={{ position: 'absolute', top: 3, left: 0, right: 0, height: 2, background: '#2a2a4a', borderRadius: 1 }} />
                 <div style={{
-                  position: 'absolute', top: 2, left: 0,
+                  position: 'absolute', top: 3, left: 0,
                   width: `${Math.min(100, ((track.volume + 24) / 30) * 100)}%`,
                   height: 2, background: c, borderRadius: 1, opacity: 0.6,
+                }} />
+                <div style={{
+                  position: 'absolute', top: 0,
+                  left: `calc(${Math.min(100, ((track.volume + 24) / 30) * 100)}% - 3px)`,
+                  width: 6, height: 8, background: c, borderRadius: 2,
+                  boxShadow: `0 0 4px ${c}`, pointerEvents: 'none',
                 }} />
                 <input type="range" min={-24} max={6} step={0.5}
                   value={track.volume}
                   onChange={e => setTrackVolume(idx, parseFloat(e.target.value))}
-                  style={{ position: 'absolute', top: -4, left: 0, width: '100%', height: 14, opacity: 0, cursor: 'pointer' }}
+                  style={{ position: 'absolute', top: -2, left: 0, width: '100%', height: 14, opacity: 0, cursor: 'ew-resize' }}
                 />
               </div>
               <span style={{ fontSize: 7, color: '#6a6a8a', width: 22, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>
@@ -79,28 +86,37 @@ export default function TrackMixer() {
               </span>
             </div>
 
-            {/* Row 3: Pan */}
+            {/* Row 3: Pan — hide when track is too short */}
+            {trackLaneHeight >= 52 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
               <span style={{ fontSize: 7, color: '#4a4a6a', width: 16 }}>Pan</span>
-              <div style={{ flex: 1, position: 'relative', height: 6 }}>
-                <div style={{ position: 'absolute', top: 2, left: 0, right: 0, height: 2, background: '#2a2a4a', borderRadius: 1 }} />
+              <div style={{ flex: 1, position: 'relative', height: 8 }}>
+                <div style={{ position: 'absolute', top: 3, left: 0, right: 0, height: 2, background: '#2a2a4a', borderRadius: 1 }} />
+                <div style={{ position: 'absolute', top: 1, left: '50%', width: 1, height: 6, background: '#3a3a5a' }} />
                 {/* Pan indicator from center */}
                 <div style={{
-                  position: 'absolute', top: 2,
+                  position: 'absolute', top: 3,
                   left: track.pan >= 0 ? '50%' : `${50 + track.pan / 2}%`,
                   width: `${Math.abs(track.pan) / 2}%`,
                   height: 2, background: c, borderRadius: 1, opacity: 0.6,
                 }} />
+                <div style={{
+                  position: 'absolute', top: 0,
+                  left: `calc(${((track.pan + 100) / 200) * 100}% - 3px)`,
+                  width: 6, height: 8, background: c, borderRadius: 2,
+                  boxShadow: `0 0 4px ${c}`, pointerEvents: 'none',
+                }} />
                 <input type="range" min={-100} max={100} step={1}
                   value={track.pan}
                   onChange={e => setTrackPan(idx, parseInt(e.target.value))}
-                  style={{ position: 'absolute', top: -4, left: 0, width: '100%', height: 14, opacity: 0, cursor: 'pointer' }}
+                  style={{ position: 'absolute', top: -2, left: 0, width: '100%', height: 14, opacity: 0, cursor: 'ew-resize' }}
                 />
               </div>
               <span style={{ fontSize: 7, color: '#6a6a8a', width: 22, textAlign: 'right', fontFamily: 'var(--font-mono)' }}>
                 {track.pan === 0 ? 'C' : track.pan < 0 ? `L${-track.pan}` : `R${track.pan}`}
               </span>
             </div>
+            )}
           </div>
         );
       })}

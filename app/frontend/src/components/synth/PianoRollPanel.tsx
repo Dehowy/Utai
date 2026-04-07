@@ -93,12 +93,6 @@ export default function PianoRollPanel() {
     if (e.key === '1') setTool('select');
     if (e.key === '2') setTool('draw');
     if (e.key === '3') setTool('erase');
-    if (e.key === ' ') {
-      e.preventDefault();
-      // Trigger transport play/pause — find and click the transport play button
-      const btn = document.querySelector('.utai-synth-transport__btn') as HTMLButtonElement;
-      if (btn) btn.click();
-    }
     if (e.key === 'Home') {
       e.preventDefault();
       import('../../lib/synth/audioEngine').then(eng => { eng.stop(); });

@@ -5,7 +5,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
-import { renderArrangement, TRACK_HEADER_W, TRACK_LANE_H, RULER_H } from '../../lib/synth/arrangementEngine';
+import { renderArrangement, TRACK_HEADER_W, RULER_H } from '../../lib/synth/arrangementEngine';
 import { RESOLUTION } from '../../types/ustx';
 import * as engine from '../../lib/synth/audioEngine';
 import TrackMixer from './TrackMixer';
@@ -81,12 +81,13 @@ export default function ArrangementView() {
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
+    const s = useSynthStore.getState();
+    const laneH = s.viewState.trackLaneHeight ?? 64;
 
     if (x < TRACK_HEADER_W) return;
 
     // Double-click on ruler → snap playhead to nearest bar
     if (y < RULER_H && x > TRACK_HEADER_W) {
-      const s = useSynthStore.getState();
       const clickTick = (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick;
       const snapped = snapToBar(clickTick);
       s.setPlaybackPosition(snapped);
@@ -94,7 +95,7 @@ export default function ArrangementView() {
       return;
     }
 
-    const trackIdx = Math.floor((y - RULER_H) / TRACK_LANE_H);
+    const trackIdx = Math.floor((y - RULER_H) / laneH);
     if (trackIdx < 0 || trackIdx >= store.project.tracks.length) return;
 
     // Find voice part or instrument part for this track
@@ -173,7 +174,8 @@ export default function ArrangementView() {
     const s = useSynthStore.getState();
     const ppt = s.viewState.pixelsPerTick;
     const clickTick = (x - TRACK_HEADER_W + s.viewState.scrollX) / ppt;
-    const trackIdx = Math.floor((y - RULER_H) / TRACK_LANE_H);
+    const laneH = s.viewState.trackLaneHeight ?? 64;
+    const trackIdx = Math.floor((y - RULER_H) / laneH);
 
     for (let i = 0; i < s.project.voice_parts.length; i++) {
       const vp = s.project.voice_parts[i];
@@ -200,7 +202,8 @@ export default function ArrangementView() {
 
     if (y < RULER_H) return;
 
-    const trackIdx = Math.floor((y - RULER_H) / TRACK_LANE_H);
+    const laneH = useSynthStore.getState().viewState.trackLaneHeight ?? 64;
+    const trackIdx = Math.floor((y - RULER_H) / laneH);
 
     // Header click: mute/solo
     if (x < TRACK_HEADER_W && trackIdx >= 0 && trackIdx < store.project.tracks.length) {
@@ -239,7 +242,8 @@ export default function ArrangementView() {
     const y = e.clientY - rect.top;
 
     // Determine which track was right-clicked
-    const trackIdx = y >= RULER_H ? Math.floor((y - RULER_H) / TRACK_LANE_H) : -1;
+    const laneH = useSynthStore.getState().viewState.trackLaneHeight ?? 64;
+    const trackIdx = y >= RULER_H ? Math.floor((y - RULER_H) / laneH) : -1;
     const validTrack = trackIdx >= 0 && trackIdx < useSynthStore.getState().project.tracks.length;
 
     const partHit = hitTestPart(x, y);
@@ -262,6 +266,11 @@ export default function ArrangementView() {
       if (e.ctrlKey) {
         const delta = e.deltaY > 0 ? 0.9 : 1.1;
         s.setViewState({ pixelsPerTick: Math.max(0.03, Math.min(5, s.viewState.pixelsPerTick * delta)) });
+      } else if (e.altKey) {
+        // Alt+wheel → vertical zoom (track lane height)
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const cur = s.viewState.trackLaneHeight ?? 64;
+        s.setViewState({ trackLaneHeight: Math.round(Math.max(40, Math.min(128, cur * factor))) });
       } else if (e.shiftKey) {
         s.setViewState({ scrollX: Math.max(0, s.viewState.scrollX + e.deltaY) });
       } else {

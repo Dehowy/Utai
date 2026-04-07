@@ -82,25 +82,27 @@ function drawRuler(rc: ArrangementRenderContext) {
 }
 
 function drawTrackLanes(rc: ArrangementRenderContext) {
-  const { ctx, width, project } = rc;
+  const { ctx, width, project, viewState } = rc;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
 
   for (let i = 0; i < project.tracks.length; i++) {
-    const y = RULER_H + i * TRACK_LANE_H;
+    const y = RULER_H + i * laneH;
     // Lane background (alternating)
     ctx.fillStyle = i % 2 === 0 ? '#0f0f22' : '#121228';
-    ctx.fillRect(TRACK_HEADER_W, y, width - TRACK_HEADER_W, TRACK_LANE_H);
+    ctx.fillRect(TRACK_HEADER_W, y, width - TRACK_HEADER_W, laneH);
 
     // Bottom border
     ctx.strokeStyle = '#1e1e3a';
     ctx.beginPath();
-    ctx.moveTo(TRACK_HEADER_W, y + TRACK_LANE_H - 0.5);
-    ctx.lineTo(width, y + TRACK_LANE_H - 0.5);
+    ctx.moveTo(TRACK_HEADER_W, y + laneH - 0.5);
+    ctx.lineTo(width, y + laneH - 0.5);
     ctx.stroke();
   }
 }
 
 function drawTrackHeaders(rc: ArrangementRenderContext) {
-  const { ctx, project } = rc;
+  const { ctx, project, viewState } = rc;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
 
   // Header panel background
   ctx.fillStyle = '#111125';
@@ -115,12 +117,12 @@ function drawTrackHeaders(rc: ArrangementRenderContext) {
 
   for (let i = 0; i < project.tracks.length; i++) {
     const track = project.tracks[i];
-    const y = RULER_H + i * TRACK_LANE_H;
+    const y = RULER_H + i * laneH;
     const color = TRACK_COLORS[i % TRACK_COLORS.length];
 
     // Color stripe
     ctx.fillStyle = color;
-    ctx.fillRect(0, y, 4, TRACK_LANE_H);
+    ctx.fillRect(0, y, 4, laneH);
 
     // Track name
     ctx.font = "11px 'DotGothic16', sans-serif";
@@ -128,14 +130,16 @@ function drawTrackHeaders(rc: ArrangementRenderContext) {
     ctx.textBaseline = 'top';
     ctx.fillText(track.track_name, 10, y + 6, TRACK_HEADER_W - 16);
 
-    // Track type label
-    ctx.font = "9px 'DotGothic16', sans-serif";
-    ctx.fillStyle = '#6a6a8a';
-    const tt = track.track_type || 'vocal';
-    const typeLabel = tt === 'vocal' ? (track.singer || 'Vocal')
-      : tt === 'instrument' ? (track.plugin_name || 'Instrument')
-      : 'Audio';
-    ctx.fillText(typeLabel, 10, y + 20, TRACK_HEADER_W - 16);
+    // Track type label — hide when lane is too short
+    if (laneH >= 50) {
+      ctx.font = "9px 'DotGothic16', sans-serif";
+      ctx.fillStyle = '#6a6a8a';
+      const tt = track.track_type || 'vocal';
+      const typeLabel = tt === 'vocal' ? (track.singer || 'Vocal')
+        : tt === 'instrument' ? (track.plugin_name || 'Instrument')
+        : 'Audio';
+      ctx.fillText(typeLabel, 10, y + 20, TRACK_HEADER_W - 16);
+    }
 
     // Mute/Solo indicators
     if (track.mute) {
@@ -149,18 +153,21 @@ function drawTrackHeaders(rc: ArrangementRenderContext) {
       ctx.fillText('S', TRACK_HEADER_W - 16, y + 6);
     }
 
-    // Volume bar (simple)
-    const volFrac = Math.min(1, Math.max(0, (track.volume + 24) / 24)); // -24dB to 0dB mapped to 0-1
-    ctx.fillStyle = 'rgba(155, 109, 255, 0.3)';
-    ctx.fillRect(10, y + 38, TRACK_HEADER_W - 24, 6);
-    ctx.fillStyle = color;
-    ctx.fillRect(10, y + 38, (TRACK_HEADER_W - 24) * volFrac, 6);
+    // Volume bar — proportional position, hide when too short
+    if (laneH >= 48) {
+      const volY = y + Math.round(laneH * 0.6);
+      const volFrac = Math.min(1, Math.max(0, (track.volume + 24) / 24));
+      ctx.fillStyle = 'rgba(155, 109, 255, 0.3)';
+      ctx.fillRect(10, volY, TRACK_HEADER_W - 24, 6);
+      ctx.fillStyle = color;
+      ctx.fillRect(10, volY, (TRACK_HEADER_W - 24) * volFrac, 6);
+    }
 
     // Bottom border
     ctx.strokeStyle = '#1e1e3a';
     ctx.beginPath();
-    ctx.moveTo(0, y + TRACK_LANE_H - 0.5);
-    ctx.lineTo(TRACK_HEADER_W, y + TRACK_LANE_H - 0.5);
+    ctx.moveTo(0, y + laneH - 0.5);
+    ctx.lineTo(TRACK_HEADER_W, y + laneH - 0.5);
     ctx.stroke();
   }
 }
@@ -168,12 +175,13 @@ function drawTrackHeaders(rc: ArrangementRenderContext) {
 function drawVoiceParts(rc: ArrangementRenderContext) {
   const { ctx, project, viewState, activePartIndex } = rc;
   const ppt = viewState.pixelsPerTick;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
 
   project.voice_parts.forEach((vp, vpIdx) => {
     const track = project.tracks[vp.track_no];
     if (!track) return;
     const color = TRACK_COLORS[vp.track_no % TRACK_COLORS.length];
-    const y = RULER_H + vp.track_no * TRACK_LANE_H;
+    const y = RULER_H + vp.track_no * laneH;
     const x = TRACK_HEADER_W + vp.position * ppt - viewState.scrollX;
     const w = vp.duration * ppt;
 
@@ -185,27 +193,27 @@ function drawVoiceParts(rc: ArrangementRenderContext) {
     // Part block
     ctx.fillStyle = color;
     ctx.globalAlpha = isSelected ? 0.45 : isActive ? 0.35 : 0.2;
-    ctx.fillRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.fillRect(x, y + 4, w, laneH - 8);
     ctx.globalAlpha = 1;
 
     // Border
     ctx.strokeStyle = isSelected ? '#f0f0ff' : color;
     ctx.lineWidth = isSelected ? 2 : isActive ? 2 : 1;
-    ctx.strokeRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.strokeRect(x, y + 4, w, laneH - 8);
 
     // Mini note visualization
     if (vp.notes.length > 0) {
       const minTone = Math.min(...vp.notes.map(n => n.tone));
       const maxTone = Math.max(...vp.notes.map(n => n.tone));
       const toneRange = Math.max(1, maxTone - minTone);
-      const laneH = TRACK_LANE_H - 16;
+      const noteAreaH = laneH - 16;
 
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.7;
       for (const note of vp.notes) {
         const nx = x + note.position * ppt;
         const nw = Math.max(1, note.duration * ppt);
-        const ny = y + 8 + (1 - (note.tone - minTone) / toneRange) * (laneH - 4);
+        const ny = y + 8 + (1 - (note.tone - minTone) / toneRange) * (noteAreaH - 4);
         const nh = Math.max(1, 3);
         if (nx + nw < TRACK_HEADER_W || nx > rc.width) continue;
         ctx.fillRect(nx, ny, nw, nh);
@@ -224,12 +232,13 @@ function drawVoiceParts(rc: ArrangementRenderContext) {
 function drawInstrumentParts(rc: ArrangementRenderContext) {
   const { ctx, project, viewState } = rc;
   const ppt = viewState.pixelsPerTick;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
 
   project.instrument_parts.forEach((ip) => {
     const track = project.tracks[ip.track_no];
     if (!track) return;
     const color = '#e8944b'; // orange for instrument tracks
-    const y = RULER_H + ip.track_no * TRACK_LANE_H;
+    const y = RULER_H + ip.track_no * laneH;
     const x = TRACK_HEADER_W + ip.position * ppt - viewState.scrollX;
     const w = ip.duration * ppt;
 
@@ -238,25 +247,25 @@ function drawInstrumentParts(rc: ArrangementRenderContext) {
     // Part block
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.25;
-    ctx.fillRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.fillRect(x, y + 4, w, laneH - 8);
     ctx.globalAlpha = 1;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
-    ctx.strokeRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.strokeRect(x, y + 4, w, laneH - 8);
 
     // Mini note density visualization
     if (ip.notes.length > 0) {
       const minTone = Math.min(...ip.notes.map(n => n.tone));
       const maxTone = Math.max(...ip.notes.map(n => n.tone));
       const toneRange = Math.max(1, maxTone - minTone);
-      const laneH = TRACK_LANE_H - 16;
+      const noteAreaH = laneH - 16;
 
       ctx.fillStyle = color;
       ctx.globalAlpha = 0.7;
       for (const note of ip.notes) {
         const nx = x + note.position * ppt;
         const nw = Math.max(1, note.duration * ppt);
-        const ny = y + 8 + (1 - (note.tone - minTone) / toneRange) * (laneH - 4);
+        const ny = y + 8 + (1 - (note.tone - minTone) / toneRange) * (noteAreaH - 4);
         if (nx + nw < TRACK_HEADER_W || nx > rc.width) continue;
         ctx.fillRect(nx, ny, nw, Math.max(1, 3));
       }
@@ -274,12 +283,13 @@ function drawInstrumentParts(rc: ArrangementRenderContext) {
 function drawWaveParts(rc: ArrangementRenderContext) {
   const { ctx, project, viewState, peakData } = rc;
   const ppt = viewState.pixelsPerTick;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
 
   project.wave_parts.forEach((wp) => {
     const track = project.tracks[wp.track_no];
     if (!track) return;
     const color = TRACK_COLORS[wp.track_no % TRACK_COLORS.length];
-    const y = RULER_H + wp.track_no * TRACK_LANE_H;
+    const y = RULER_H + wp.track_no * laneH;
 
     // Convert duration from ms to ticks (approximate using first tempo)
     const bpm = project.tempos[0]?.bpm ?? 120;
@@ -292,25 +302,25 @@ function drawWaveParts(rc: ArrangementRenderContext) {
     // Part block
     ctx.fillStyle = color;
     ctx.globalAlpha = 0.15;
-    ctx.fillRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.fillRect(x, y + 4, w, laneH - 8);
     ctx.globalAlpha = 1;
 
     ctx.strokeStyle = color;
     ctx.lineWidth = 1;
-    ctx.strokeRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.strokeRect(x, y + 4, w, laneH - 8);
 
     // Waveform thumbnail from peak data
     const peaks = peakData?.get(wp.buffer_id || '');
     if (peaks && peaks.length > 0) {
-      const laneH = TRACK_LANE_H - 16;
-      const midY = y + 8 + laneH / 2;
+      const waveH = laneH - 16;
+      const midY = y + 8 + waveH / 2;
       ctx.strokeStyle = color;
       ctx.globalAlpha = 0.6;
       ctx.lineWidth = 1;
       ctx.beginPath();
       for (let i = 0; i < Math.min(peaks.length, Math.floor(w)); i++) {
         const px = x + (i / peaks.length) * w;
-        const amp = peaks[i] * (laneH / 2);
+        const amp = peaks[i] * (waveH / 2);
         if (i === 0) ctx.moveTo(px, midY - amp);
         else ctx.lineTo(px, midY - amp);
       }
