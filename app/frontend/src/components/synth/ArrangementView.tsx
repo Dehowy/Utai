@@ -8,8 +8,17 @@ import { useSynthStore } from '../../store/synthStore';
 import { renderArrangement, TRACK_HEADER_W, TRACK_LANE_H, RULER_H } from '../../lib/synth/arrangementEngine';
 import { RESOLUTION } from '../../types/ustx';
 import * as engine from '../../lib/synth/audioEngine';
+import TrackMixer from './TrackMixer';
 
 type ArrDragMode = 'none' | 'playhead';
+
+/** Snap a tick position to the nearest bar line. */
+function snapToBar(tick: number): number {
+  const s = useSynthStore.getState();
+  const ts = s.project.time_signatures[0];
+  const ticksPerBar = RESOLUTION * (ts?.beat_per_bar ?? 4);
+  return Math.round(tick / ticksPerBar) * ticksPerBar;
+}
 
 export default function ArrangementView() {
   const { t } = useTranslation();
@@ -78,12 +87,10 @@ export default function ArrangementView() {
     // Double-click on ruler → snap playhead to nearest bar
     if (y < RULER_H && x > TRACK_HEADER_W) {
       const s = useSynthStore.getState();
-      const ts = s.project.time_signatures[0];
-      const ticksPerBar = RESOLUTION * (ts?.beat_per_bar ?? 4);
       const clickTick = (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick;
-      const nearestBar = Math.round(clickTick / ticksPerBar) * ticksPerBar;
-      s.setPlaybackPosition(nearestBar);
-      engine.seek(engine.ticksToSeconds(nearestBar, s.project.tempos));
+      const snapped = snapToBar(clickTick);
+      s.setPlaybackPosition(snapped);
+      engine.seek(engine.ticksToSeconds(snapped, s.project.tempos));
       return;
     }
 
@@ -113,10 +120,11 @@ export default function ArrangementView() {
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    // Click on ruler → set playhead and start dragging
+    // Click on ruler → set playhead (snapped to bar) and start dragging
     if (y < RULER_H && x > TRACK_HEADER_W) {
       const s = useSynthStore.getState();
-      const tick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      const rawTick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      const tick = snapToBar(rawTick);
       s.setPlaybackPosition(tick);
       engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
       dragMode.current = 'playhead';
@@ -147,7 +155,8 @@ export default function ArrangementView() {
     if (dragMode.current !== 'playhead') return;
     if (x > TRACK_HEADER_W) {
       const s = useSynthStore.getState();
-      const tick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      const rawTick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      const tick = snapToBar(rawTick);
       s.setPlaybackPosition(tick);
       engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
     }
@@ -243,21 +252,25 @@ export default function ArrangementView() {
   }, []);
 
   // Wheel scroll
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    e.preventDefault();
-    if (e.ctrlKey) {
-      // Zoom
-      const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      const newPPT = Math.max(0.05, Math.min(5, store.viewState.pixelsPerTick * delta));
-      useSynthStore.getState().setViewState({ pixelsPerTick: newPPT });
-    } else if (e.shiftKey) {
-      // Horizontal scroll
-      useSynthStore.getState().setViewState({ scrollX: Math.max(0, store.viewState.scrollX + e.deltaY) });
-    } else {
-      // Vertical scroll (for many tracks)
-      // No vertical scroll needed for now — tracks fit
-    }
-  }, [store.viewState]);
+  // Native wheel handler (passive:false needed to preventDefault on Ctrl+wheel)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const s = useSynthStore.getState();
+      if (e.ctrlKey) {
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        s.setViewState({ pixelsPerTick: Math.max(0.03, Math.min(5, s.viewState.pixelsPerTick * delta)) });
+      } else if (e.shiftKey) {
+        s.setViewState({ scrollX: Math.max(0, s.viewState.scrollX + e.deltaY) });
+      } else {
+        s.setViewState({ scrollX: Math.max(0, s.viewState.scrollX + e.deltaX + e.deltaY) });
+      }
+    };
+    canvas.addEventListener('wheel', handler, { passive: false });
+    return () => canvas.removeEventListener('wheel', handler);
+  }, []);
 
   // Track management buttons
   const addVocalTrack = () => store.addTrack('vocal');
@@ -295,8 +308,9 @@ export default function ArrangementView() {
           + {t('synth.track.addInstrument')}
         </button>
       </div>
-      {/* Canvas */}
+      {/* Canvas + mixer overlay */}
       <div ref={containerRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
+        <TrackMixer />
         <canvas
           ref={canvasRef}
           style={{ width: size.width, height: size.height, display: 'block', cursor: dragMode.current === 'playhead' ? 'col-resize' : undefined }}
@@ -307,7 +321,6 @@ export default function ArrangementView() {
           onMouseLeave={() => { handleMouseUp(); setMouseX(null); }}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
-          onWheel={handleWheel}
         />
         {/* Context menu */}
         {contextMenu && (

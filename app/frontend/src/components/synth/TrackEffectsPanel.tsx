@@ -62,7 +62,9 @@ export default function TrackEffectsPanel() {
                 background: 'var(--bg-panel)', border: '1px solid var(--border-mid)',
                 minWidth: 150, padding: 4,
               }}>
-                {(Object.entries(RENDER_EFFECTS) as [RenderEffectType, any][]).map(([type, def]) => (
+                {(Object.entries(RENDER_EFFECTS) as [RenderEffectType, any][])
+                  .filter(([type]) => type !== 'panner')
+                  .map(([type, def]) => (
                   <button
                     key={type}
                     className="utai-btn"

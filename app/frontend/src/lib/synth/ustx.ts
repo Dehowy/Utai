@@ -169,7 +169,7 @@ export function createDefaultProject(): UProject {
       comment: '',
       track_no: 0,
       position: 0,
-      duration: 480 * 16,
+      duration: 480 * 32,
       notes: [],
       curves: [],
     }],

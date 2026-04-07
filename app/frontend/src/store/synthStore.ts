@@ -178,7 +178,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   viewState: {
     scrollX: 0,
     scrollY: 60 * 20 - 200,
-    pixelsPerTick: 0.5,
+    pixelsPerTick: 0.15,
     pixelsPerSemitone: 20,
     snapTicks: RESOLUTION / 4,
   },
@@ -405,7 +405,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       comment: '',
       track_no: trackNo,
       position,
-      duration: RESOLUTION * 16,
+      duration: RESOLUTION * 32,
       notes: [],
       curves: [],
     });
@@ -453,7 +453,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       name: `Inst ${project.instrument_parts.length + 1}`,
       track_no: trackNo,
       position,
-      duration: RESOLUTION * 16,
+      duration: RESOLUTION * 32,
       notes: [],
     });
     return { ...stacks, project, dirty: true };
@@ -501,7 +501,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
         comment: '',
         track_no: idx,
         position: 0,
-        duration: RESOLUTION * 16,
+        duration: RESOLUTION * 32,
         notes: [],
         curves: [],
       });
@@ -510,7 +510,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
         name: `Inst ${idx + 1}`,
         track_no: idx,
         position: 0,
-        duration: RESOLUTION * 16,
+        duration: RESOLUTION * 32,
         notes: [],
       });
     }
