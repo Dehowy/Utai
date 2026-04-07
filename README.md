@@ -22,7 +22,7 @@
 
 ## What is Utai?
 
-**Utai** (Uta[歌] + AI) is a desktop application for AI-powered audio processing. It integrates multiple projects and provides a visual node-based workflow where you can chain together audio separation, voice conversion, and media export operations.
+**Utai** (Uta[歌] + AI) is a desktop application for AI-powered audio processing and singing synthesis. It integrates multiple projects and provides a visual node-based workflow for audio separation, voice conversion, and media export — plus a built-in DAW for AI singing voice synthesis using DiffSinger and RVC.
 
 ### Core Capabilities
 
@@ -34,6 +34,9 @@
 | **Media Download** | Download audio/video from URLs via yt-dlp integration |
 | **Audio Merge** | Mix multiple audio tracks (vocals + instrumental + effects) into one |
 | **Media Export** | Export with full ffmpeg encoding control (codec, bitrate, filters, metadata) |
+| **Singing Synthesis** | AI singing voice synthesis using DiffSinger voice banks with RVC timbre conversion |
+| **DAW / Arrangement** | Multi-track piano roll, arrangement view, transport bar, track mixer, and audio effects |
+| **VST Plugin Host** | Load and play VST2/VST3 instrument plugins via JUCE integration |
 | **Project Files** | Save/share workflows as `.utai` files and training projects as `.utaiTr` files |
 
 ## Quick Start (End Users)
@@ -66,7 +69,7 @@ Right-click any `.utai` or `.utaiTr` file > **Open with** > Browse to `Utai.exe`
 │  ┌───────────────────────────────────────────────────┐  │
 │  │  BrowserWindow                                    │  │
 │  │  ┌─────────────────────────────────────────────┐  │  │
-│  │  │  React Frontend (React Flow + Zustand)      │  │  │
+│  │  │  React Frontend (React Flow + Canvas DAW)    │  │  │
 │  │  │  Served from http://127.0.0.1:{port}        │  │  │
 │  │  └─────────────────────────────────────────────┘  │  │
 │  └───────────────────────────────────────────────────┘  │
@@ -79,6 +82,8 @@ Right-click any `.utai` or `.utaiTr` file > **Open with** > Browse to `Utai.exe`
 │  │  ├─ RVC Wrapper (inference + 5-step training)     │  │
 │  │  ├─ yt-dlp Wrapper (media download)               │  │
 │  │  ├─ Audio Buffer Manager (disk-backed)            │  │
+│  │  ├─ Synth Wrapper (DiffSinger synthesis)          │  │
+│  │  │  └─ UtaiRenderer.exe (.NET 8 / OpenUtau Core)  │  │
 │  │  └─ WebSocket (real-time progress)                │  │
 │  └───────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
@@ -93,6 +98,9 @@ Right-click any `.utai` or `.utaiTr` file > **Open with** > Browse to `Utai.exe`
 | Node Editor | @xyflow/react 12 (React Flow) |
 | State Management | Zustand 5 |
 | Audio Visualization | WaveSurfer.js 7 |
+| Audio Engine | Web Audio API (multi-track mixer, effects) |
+| Singing Synthesis | DiffSinger (via OpenUtau Core, .NET 8) |
+| Plugin Host | JUCE (VST2/VST3 instruments) |
 | Backend | FastAPI 0.115, Uvicorn, Python 3.10 |
 | ML Framework | PyTorch 2.5.1 (CUDA 12.1) |
 | Audio Processing | librosa, soundfile, pedalboard, soxr |
@@ -110,7 +118,7 @@ utai/
 ├── app/
 │   ├── frontend/                # React application
 │   │   ├── src/
-│   │   │   ├── nodes/           # 12 node UI components
+│   │   │   ├── nodes/           # Node UI components (workflow)
 │   │   │   │   ├── AudioInputNode.tsx
 │   │   │   │   ├── SeparationNode.tsx
 │   │   │   │   ├── RVCNode.tsx
@@ -123,7 +131,9 @@ utai/
 │   │   │   ├── api/             # Backend API client
 │   │   │   ├── i18n/            # Translations (zh/en/ja)
 │   │   │   ├── styles/          # utai.css (retro theme)
-│   │   │   └── pages/           # WorkflowPage, TrainingPage
+│   │   │   ├── components/synth/ # DAW: piano roll, arrangement, mixer, effects
+│   │   │   ├── lib/synth/       # Canvas engines, audio engine, effects
+│   │   │   └── pages/           # WorkflowPage, TrainingPage, SynthPage
 │   │   └── package.json
 │   │
 │   └── backend/                 # FastAPI application
@@ -135,7 +145,7 @@ utai/
 │       │   ├── audio_buffer.py  # Disk-backed audio storage
 │       │   ├── node_registry.py # Node type discovery
 │       │   └── model_categories.py
-│       ├── nodes/               # 12 node implementations
+│       ├── nodes/               # Node implementations (workflow)
 │       │   ├── base.py          # BaseNode ABC, ExecutionContext
 │       │   ├── audio_input.py
 │       │   ├── separation.py    # Unified MSST/VR dispatcher
@@ -151,7 +161,8 @@ utai/
 │       │   ├── routes_execute.py
 │       │   ├── routes_workflow.py  # .utai/.utaiTr import/export
 │       │   ├── routes_models.py
-│       │   └── routes_train.py
+│       │   ├── routes_train.py
+│       │   └── routes_synth.py    # Synth render, singer management
 │       └── schemas/             # Pydantic models
 │
 ├── electron/                    # Electron desktop wrapper
@@ -164,6 +175,11 @@ utai/
 │   ├── configs/                 # Per-model YAML configs
 │   ├── data/models_info.json    # 113 model definitions & URLs
 │   └── modules/                 # MSST inference modules
+│
+├── synth/                       # Singing synthesis
+│   ├── utai-renderer/           # UtaiRenderer.exe (.NET 8 CLI)
+│   │   └── Singers/             # DiffSinger voice banks
+│   └── utai-renderer-src/       # C# source for renderer
 │
 ├── RVC/                         # RVC source
 │   └── RVC20240604Nvidia/
@@ -266,6 +282,26 @@ git clone https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.
 ```bash
 # Clone yt-dlp source
 git clone https://github.com/yt-dlp/yt-dlp.git yt-dlp
+```
+
+#### UtaiRenderer (Singing Synthesis)
+
+```bash
+# Requires .NET 8 SDK
+# Clone the OpenUtau fork with DiffSinger support
+cd synth
+git clone --depth 1 https://github.com/keirokeer/OpenUtau-DiffSinger-Lunai.git
+
+# Apply access modifier patches (internal → public) to OpenUtau.Core:
+#   RenderEngine.cs, ExportAdapter.cs, MasterAdapter.cs, PhonemizerRunner.cs,
+#   DocManager.cs, UPart.cs, UNote.cs — see synth/utai-renderer-src/ for details
+
+# Build the self-contained renderer
+cd utai-renderer-src
+dotnet publish -c Release -r win-x64 --self-contained true -o "../utai-renderer"
+
+# Download DiffSinger voice banks into synth/utai-renderer/Singers/
+# Available at: https://github.com/lunaiproject/lunai_singers/releases
 ```
 
 #### ffmpeg
@@ -402,6 +438,93 @@ Step 5: Index Building    — FAISS index for voice retrieval
 
 ---
 
+## Synth Page (DAW)
+
+The `/synth` page is a built-in DAW for AI singing voice synthesis. It combines a DiffSinger-based vocal renderer with RVC timbre conversion, wrapped in a multi-track arrangement environment.
+
+### Render Pipeline
+
+```
+DiffSinger Voice Bank  →  UtaiRenderer.exe  →  Raw Vocal WAV
+                                                      ↓
+                              RVC Voice Conversion  ←──┘
+                                      ↓
+                              Final Vocal WAV  →  Web Audio Playback
+```
+
+The backend orchestrates: **UtaiRenderer** (C#/.NET 8, wraps OpenUtau Core) synthesizes DiffSinger vocals from the USTX-format project, then the RVC wrapper applies timbre conversion using the selected voice model.
+
+### Piano Roll Editor
+
+- Canvas 2D rendering engine with retro dark theme
+- Note creation, selection, drag, resize, and deletion
+- Lyric editing per note (click to edit inline)
+- Tool modes: Select, Draw, Erase (keyboard: `1`/`2`/`3`)
+- Snap grid with 11 options (1/1 to 1/32 triplet), Alt+wheel to cycle
+- Ctrl+wheel horizontal zoom, Shift+wheel horizontal pan
+- Undo/Redo (Ctrl+Z/Y, max 50 history)
+
+### Arrangement View
+
+- Multi-track overview with canvas-based rendering
+- Track types: Vocal, Audio (imported WAV), Instrument (VST plugin)
+- Vocal parts shown as colored blocks with mini note visualization
+- Wave parts with waveform thumbnails from peak data
+- Instrument parts with note density preview
+- Double-click a part to open in piano roll
+- Right-click context menu: create, split (at playhead), delete parts
+- Ctrl+wheel horizontal zoom, Alt+wheel vertical track height zoom (40–128px)
+- Track header: mute/solo buttons, volume bar
+
+### Track Mixer
+
+- Per-track volume (–24 to +6 dB) and pan (L100–R100) with visible drag thumbs
+- Mute (M) and Solo (S) buttons per track
+- Mixer panel adapts to track height changes
+- Pan row auto-hides when tracks are zoomed small
+
+### Transport Bar
+
+- Play / Pause / Stop controls (Space = toggle, Home = stop)
+- Position display: Bar:Beat:Tick + MM:SS.ms
+- BPM control and time signature
+- Loop toggle with range
+- WaveSurfer.js waveform strip with click-to-seek
+
+### Audio Effects
+
+Built-in Web Audio effects applied per-track:
+
+| Effect | Parameters |
+|--------|-----------|
+| Gain | Volume (dB) |
+| 3-Band EQ | Low/Mid/High gain, crossover frequencies |
+| Reverb | Wet/dry mix, decay, pre-delay (convolution-based) |
+| Compressor | Threshold, knee, ratio, attack, release |
+
+### VST Plugin Support
+
+- JUCE-based VST2/VST3 host for instrument tracks
+- Plugin editor windows for parameter control
+- MIDI note playback from arrangement
+
+### Keyboard Shortcuts (Synth Page)
+
+| Shortcut | Action |
+|----------|--------|
+| Space | Play / Pause |
+| Home | Stop, go to start |
+| Ctrl+S | Render (compile) |
+| Ctrl+Z / Ctrl+Y | Undo / Redo |
+| 1 / 2 / 3 | Select / Draw / Erase tool |
+| Delete / Backspace | Delete selected notes |
+| Ctrl+A | Select all notes |
+| Ctrl+Wheel | Horizontal zoom |
+| Alt+Wheel | Track height zoom (arrangement) / Snap grid cycle (piano roll) |
+| Shift+Wheel | Horizontal scroll |
+
+---
+
 ## Execution Engine
 
 The workflow executor implements:
@@ -478,6 +601,9 @@ The portable build auto-patches Python to:
 - TensorBoard is stubbed out (training charts are built into the UI instead)
 - Models marked with `*` use community-hosted download sources
 - Unsigned executable triggers Windows SmartScreen warning
+- UtaiRenderer requires .NET 8 runtime (bundled in self-contained publish)
+- DiffSinger voice banks must be manually downloaded and placed in `synth/utai-renderer/Singers/`
+- VST plugin support is Windows-only and requires plugin files installed separately
 
 ---
 
@@ -487,7 +613,11 @@ The portable build auto-patches Python to:
 - [RVC (Retrieval-based Voice Conversion)](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) — Voice conversion & training
 - [yt-dlp](https://github.com/yt-dlp/yt-dlp) — Media downloader
 - [ffmpeg](https://ffmpeg.org/) — Audio/video processing
+- [OpenUtau](https://github.com/stakira/OpenUtau) — Singing synthesis engine (Core library)
+- [DiffSinger](https://github.com/openvpi/DiffSinger) — Neural singing voice synthesis
+- [JUCE](https://juce.com/) — VST2/VST3 plugin host framework
 - [React Flow](https://reactflow.dev/) — Node-based UI framework
+- [WaveSurfer.js](https://wavesurfer.xyz/) — Audio waveform visualization
 - Model authors: aufr33, anvuew, Gabox, kimberley, SYHFT, pcunwa, and others
 
 ---
