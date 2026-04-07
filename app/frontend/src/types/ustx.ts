@@ -82,6 +82,21 @@ export interface UWavePart {
   buffer_id?: string;  // backend audio buffer reference for imported audio
 }
 
+export interface UInstrumentNote {
+  position: number;    // ticks relative to part start
+  duration: number;    // ticks
+  tone: number;        // MIDI note 0-127
+  velocity: number;    // 0-127 (default 100)
+}
+
+export interface UInstrumentPart {
+  name: string;
+  track_no: number;
+  position: number;   // ticks from project start
+  duration: number;   // ticks
+  notes: UInstrumentNote[];
+}
+
 export interface UTempo {
   position: number;   // ticks
   bpm: number;
@@ -107,9 +122,11 @@ export interface UExpressionDescriptor {
 export interface UTrack {
   track_name: string;
   track_color: string;
-  track_type?: 'vocal' | 'audio';  // defaults to 'vocal' for backward compat
+  track_type?: 'vocal' | 'audio' | 'instrument';
   singer?: string;
   phonemizer?: string;
+  plugin_name?: string;       // VST plugin name (for instrument tracks)
+  plugin_state?: string;      // base64 plugin state blob
   mute: boolean;
   solo: boolean;
   volume: number;
@@ -134,6 +151,7 @@ export interface UProject {
   tracks: UTrack[];
   voice_parts: UVoicePart[];
   wave_parts: UWavePart[];
+  instrument_parts: UInstrumentPart[];
   [key: string]: unknown;
 }
 

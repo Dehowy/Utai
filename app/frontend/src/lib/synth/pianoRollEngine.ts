@@ -3,7 +3,7 @@
  *  Retro dark theme to match Utai's visual style.
  */
 
-import type { UProject } from '../../types/ustx';
+import type { UProject, UInstrumentPart } from '../../types/ustx';
 import { RESOLUTION, midiToName, isBlackKey } from '../../types/ustx';
 
 const KEYBOARD_WIDTH = 48;
@@ -29,7 +29,9 @@ export interface RenderContext {
   selectedNotes: Set<string>;
   activePartIndex: number;
   hoverMidi: number | null;
-  playheadTicks?: number;  // if >= 0, draw playhead line
+  playheadTicks?: number;
+  hoverPlayhead?: boolean;
+  instrumentPart?: UInstrumentPart | null;  // if set, render instrument notes instead of voice notes
 }
 
 /** Main render function — call on every frame. */
@@ -43,27 +45,55 @@ export function renderPianoRoll(rc: RenderContext) {
   drawGrid(rc);
   drawHoverRow(rc);
   drawNotes(rc);
-  drawPlayhead(rc);
   drawKeyboard(rc);
   drawHeader(rc);
+  drawPlayhead(rc); // after header so triangle is visible on the ruler
 }
 
 function drawPlayhead(rc: RenderContext) {
   const { ctx, height, viewState } = rc;
   const ticks = rc.playheadTicks;
-  if (ticks == null || ticks < 0) return;
+  if (ticks == null) return;
   const x = KEYBOARD_WIDTH + ticks * viewState.pixelsPerTick - viewState.scrollX;
-  if (x < KEYBOARD_WIDTH || x > rc.width) return;
-  ctx.save();
-  ctx.strokeStyle = '#ff6b9d';
-  ctx.lineWidth = 2;
-  ctx.shadowColor = '#ff6b9d';
-  ctx.shadowBlur = 6;
-  ctx.beginPath();
-  ctx.moveTo(x, HEADER_HEIGHT);
-  ctx.lineTo(x, height);
-  ctx.stroke();
-  ctx.restore();
+  const hover = rc.hoverPlayhead;
+
+  // Hover glow zone (wider translucent strip behind the line)
+  if (hover && x >= KEYBOARD_WIDTH && x <= rc.width) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 107, 157, 0.08)';
+    ctx.fillRect(x - 6, HEADER_HEIGHT, 12, height - HEADER_HEIGHT);
+    ctx.restore();
+  }
+
+  // Playhead line
+  if (x >= KEYBOARD_WIDTH && x <= rc.width) {
+    ctx.save();
+    ctx.strokeStyle = '#ff6b9d';
+    ctx.lineWidth = hover ? 3 : 2;
+    ctx.shadowColor = '#ff6b9d';
+    ctx.shadowBlur = hover ? 10 : 6;
+    ctx.beginPath();
+    ctx.moveTo(x, HEADER_HEIGHT);
+    ctx.lineTo(x, height);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Down-triangle on ruler header
+  if (x >= KEYBOARD_WIDTH - 6 && x <= rc.width + 6) {
+    const triSize = hover ? 7 : 5;
+    ctx.save();
+    ctx.fillStyle = '#ff6b9d';
+    ctx.shadowColor = '#ff6b9d';
+    ctx.shadowBlur = hover ? 8 : 4;
+    ctx.beginPath();
+    ctx.moveTo(x - triSize, 2);
+    ctx.lineTo(x + triSize, 2);
+    ctx.lineTo(x, HEADER_HEIGHT - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 }
 
 function drawGrid(rc: RenderContext) {
@@ -143,9 +173,12 @@ function drawNotes(rc: RenderContext) {
   const startTick = Math.floor(scrollX / pixelsPerTick);
   const endTick = Math.ceil((scrollX + width - KEYBOARD_WIDTH) / pixelsPerTick);
 
+  // When instrument part is active, dim all voice parts to background
+  const instMode = !!rc.instrumentPart;
+
   project.voice_parts.forEach((part, pi) => {
     const color = TRACK_COLORS[part.track_no % TRACK_COLORS.length];
-    const isActivePart = pi === activePartIndex;
+    const isActivePart = !instMode && pi === activePartIndex;
 
     part.notes.forEach((note, ni) => {
       const absPos = part.position + note.position;
@@ -188,6 +221,49 @@ function drawNotes(rc: RenderContext) {
       }
     });
   });
+
+  // Instrument notes (when an instrument part is active)
+  const instPart = rc.instrumentPart;
+  if (instPart) {
+    const color = '#e8944b'; // orange for instrument notes
+    instPart.notes.forEach((note, ni) => {
+      const absPos = instPart.position + note.position;
+      const absEnd = absPos + note.duration;
+      if (absEnd < startTick || absPos > endTick) return;
+      const x = KEYBOARD_WIDTH + absPos * pixelsPerTick - scrollX;
+      const y = HEADER_HEIGHT + (127 - note.tone) * pixelsPerSemitone - scrollY;
+      const w = note.duration * pixelsPerTick;
+      const h = pixelsPerSemitone;
+      if (y + h < HEADER_HEIGHT || y > height) return;
+
+      const noteId = `i0-${ni}`;
+      const isSelected = selectedNotes.has(noteId);
+
+      // Note body — brightness by velocity
+      const velAlpha = 0.5 + (note.velocity / 127) * 0.4;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = velAlpha;
+      ctx.fillRect(x, y + 1, w - 1, h - 2);
+      ctx.globalAlpha = 1;
+
+      if (isSelected) {
+        ctx.strokeStyle = '#f0f0ff';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y + 1, w - 1, h - 2);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x - 1, y, w + 1, h);
+      }
+
+      // Show velocity as small text
+      if (w > 20 && h > 10) {
+        ctx.fillStyle = '#d0d0dc';
+        ctx.font = `${Math.min(10, h - 4)}px 'DotGothic16', sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`v${note.velocity}`, x + 3, y + h / 2, w - 6);
+      }
+    });
+  }
 }
 
 function drawKeyboard(rc: RenderContext) {

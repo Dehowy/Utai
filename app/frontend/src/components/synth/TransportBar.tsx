@@ -79,7 +79,9 @@ export default function TransportBar() {
   }, []);
 
   // Load audio into WaveSurfer when render completes
-  const audioUrl = finalUrl || renderedUrl || trackAudioUrls[0];
+  // Show audio from: RVC final → DiffSinger render → any track that has audio
+  const anyTrackUrl = Object.values(trackAudioUrls).find(u => !!u) || null;
+  const audioUrl = finalUrl || renderedUrl || anyTrackUrl;
   useEffect(() => {
     if (wsRef.current && audioUrl) {
       wsRef.current.load(audioUrl);
@@ -87,6 +89,19 @@ export default function TransportBar() {
       wsRef.current.empty();
     }
   }, [audioUrl]);
+
+  // Sync playback position → WaveSurfer progress (bidirectional)
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || !ws.getDuration()) return;
+    const totalSec = ws.getDuration();
+    if (totalSec <= 0) return;
+    const progress = posSec / totalSec;
+    // seekTo expects 0-1 and doesn't trigger click events
+    if (progress >= 0 && progress <= 1 && isFinite(progress)) {
+      ws.seekTo(progress);
+    }
+  }, [posSec]);
 
   const handlePlay = useCallback(() => {
     if (isPlaying) {
@@ -141,6 +156,12 @@ export default function TransportBar() {
     setPlaybackPosition(0);
   }, [setPlaying, setPlaybackPosition]);
 
+  const handleReset = useCallback(() => {
+    setPlaybackPosition(0);
+    engine.seek(0);
+    useSynthStore.getState().setViewState({ scrollX: 0 });
+  }, [setPlaybackPosition]);
+
   return (
     <div className="utai-synth-transport">
       <div className="utai-synth-transport__controls">
@@ -157,6 +178,13 @@ export default function TransportBar() {
           title={t('synth.transport.stop')}
         >
           ■
+        </button>
+        <button
+          className="utai-synth-transport__btn"
+          onClick={handleReset}
+          title={t('synth.transport.reset')}
+        >
+          ⏮
         </button>
         <button
           className={`utai-synth-transport__btn ${loopEnabled ? 'utai-synth-transport__btn--active' : ''}`}

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ConfirmDialog } from './ConfirmDialog'
+import { utaiAlert } from './UtaiAlert'
 import {
   getModelCategories,
   getModelsByCategory,
@@ -23,6 +24,9 @@ import {
   restoreDiffSinger,
   deleteDiffSinger,
   deleteArchivedDiffSinger,
+  getVSTPlugins,
+  importVSTPlugin,
+  deleteVSTPlugin,
 } from '../api/client'
 import { emitModelsChanged } from '../utils/modelEvents'
 
@@ -30,8 +34,7 @@ interface ModelManagerProps {
   open: boolean
   onClose: () => void
   initialCategory?: string
-  /** Start on RVC tab */
-  initialTab?: 'separation' | 'rvc' | 'diffsinger'
+  initialTab?: 'separation' | 'rvc' | 'diffsinger' | 'vst'
 }
 
 function formatSize(bytes: number): string {
@@ -43,8 +46,8 @@ function formatSize(bytes: number): string {
 
 export function ModelManager({ open, onClose, initialCategory, initialTab }: ModelManagerProps) {
   const { t, i18n } = useTranslation()
-  // Top-level section: 'separation' | 'rvc' | 'diffsinger'
-  const [section, setSection] = useState<'separation' | 'rvc' | 'diffsinger'>(initialTab || 'separation')
+  // Top-level section
+  const [section, setSection] = useState<'separation' | 'rvc' | 'diffsinger' | 'vst'>(initialTab || 'separation')
   const [categories, setCategories] = useState<any[]>([])
   const [selectedCat, setSelectedCat] = useState(initialCategory || '')
   const [models, setModels] = useState<any[]>([])
@@ -59,6 +62,9 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
   const [dsDownloading, setDsDownloading] = useState<Record<string, number>>({})
   const [dsImportOpen, setDsImportOpen] = useState(false)
   const [dsImporting, setDsImporting] = useState(false)
+  // VST state
+  const [vstPlugins, setVstPlugins] = useState<any[]>([])
+  const [vstImporting, setVstImporting] = useState(false)
   const [downloading, setDownloading] = useState<Record<string, number>>({})
   const [deleteMode, setDeleteMode] = useState(false)
   const [deleting, setDeleting] = useState<Record<string, boolean>>({})
@@ -89,6 +95,30 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     getArchivedDiffSinger().then(setDsArchived).catch(console.error)
   }, [])
 
+  const refreshVstData = useCallback(() => {
+    getVSTPlugins().then(setVstPlugins).catch(console.error)
+  }, [])
+
+  const handleVstImport = useCallback(async () => {
+    const api = window.electronAPI
+    const filePath = api?.isElectron
+      ? await api.openFile({
+          title: 'Import VST Plugin',
+          filters: [{ name: 'VST Plugin', extensions: ['dll', 'vst3'] }],
+        })
+      : null
+    if (!filePath) return
+    setVstImporting(true)
+    try {
+      await importVSTPlugin(filePath)
+      refreshVstData()
+      emitModelsChanged()
+    } catch (e: any) {
+      await utaiAlert(e?.message || 'Import failed')
+    }
+    setVstImporting(false)
+  }, [refreshVstData])
+
   // Load data on open
   useEffect(() => {
     if (!open) return
@@ -100,6 +130,7 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     }).catch(console.error)
     refreshRvcData()
     refreshDsData()
+    refreshVstData()
   }, [open])
 
   // Load models for selected separation category
@@ -356,7 +387,7 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
       emitModelsChanged()
       setDsImportOpen(false)
     } catch (e: any) {
-      alert(`Import failed: ${e.message}`)
+      utaiAlert(`Import failed: ${e.message}`)
     } finally {
       setDsImporting(false)
     }
@@ -468,6 +499,13 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
               style={section === 'diffsinger' ? { borderColor: 'var(--accent-purple)', color: 'var(--accent-purple)' } : undefined}
             >
               {t('models.tabDiffSinger')}
+            </button>
+            <button
+              className={`utai-model-manager__section-tab ${section === 'vst' ? 'utai-model-manager__section-tab--active' : ''}`}
+              onClick={() => setSection('vst')}
+              style={section === 'vst' ? { borderColor: 'var(--accent-orange)', color: 'var(--accent-orange)' } : undefined}
+            >
+              {t('models.tabVST')}
             </button>
           </div>
 
@@ -928,6 +966,50 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                     )}
                   </>
                 )}
+              </div>
+            </div>
+          )}
+
+          {section === 'vst' && (
+            /* ── VST Instruments Section ── */
+            <div className="utai-model-manager__body">
+              <div className="utai-model-manager__tabs">
+                <button className="utai-btn" onClick={handleVstImport} disabled={vstImporting}
+                  style={{ fontSize: 11, padding: '2px 10px', borderColor: 'var(--accent-orange)', color: 'var(--accent-orange)' }}>
+                  {vstImporting ? '...' : t('models.vstImport')}
+                </button>
+              </div>
+              <div className="utai-model-manager__list" style={{ maxHeight: '60vh' }}>
+                {vstPlugins.length === 0 ? (
+                  <div style={{ padding: 20, textAlign: 'center', color: 'var(--text-dim)', fontFamily: 'var(--font-pixel)', fontSize: 11 }}>
+                    {t('models.vstEmpty')}
+                  </div>
+                ) : vstPlugins.map((p) => (
+                  <div key={p.name} className="utai-model-manager__item" style={{ borderColor: 'var(--accent-orange)' }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 12, color: 'var(--accent-orange)' }}>{p.name}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 2 }}>
+                        {p.dll || '?'} {p.params > 0 ? `· ${p.params} params` : ''} {p.channels ? `· ${p.channels}ch` : ''}
+                      </div>
+                    </div>
+                    {deleteMode && (
+                      <button
+                        className="utai-btn"
+                        style={{ fontSize: 10, padding: '2px 8px', borderColor: 'var(--accent-pink)', color: 'var(--accent-pink)' }}
+                        onClick={() => setConfirmDelete({
+                          name: p.name,
+                          action: async () => {
+                            await deleteVSTPlugin(p.name).catch(console.error)
+                            refreshVstData()
+                            emitModelsChanged()
+                          },
+                        })}
+                      >
+                        {t('models.delete')}
+                      </button>
+                    )}
+                  </div>
+                ))}
               </div>
             </div>
           )}

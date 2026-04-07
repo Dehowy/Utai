@@ -32,9 +32,10 @@ export function renderArrangement(rc: ArrangementRenderContext) {
   drawRuler(rc);
   drawTrackLanes(rc);
   drawVoiceParts(rc);
+  drawInstrumentParts(rc);
   drawWaveParts(rc);
-  drawPlayhead(rc);
   drawTrackHeaders(rc);
+  drawPlayhead(rc); // after headers so triangle is visible on the ruler
 }
 
 function drawRuler(rc: ArrangementRenderContext) {
@@ -129,8 +130,10 @@ function drawTrackHeaders(rc: ArrangementRenderContext) {
     // Track type label
     ctx.font = "9px 'DotGothic16', sans-serif";
     ctx.fillStyle = '#6a6a8a';
-    const typeLabel = (track.track_type || 'vocal') === 'vocal'
-      ? (track.singer || 'Vocal') : 'Audio';
+    const tt = track.track_type || 'vocal';
+    const typeLabel = tt === 'vocal' ? (track.singer || 'Vocal')
+      : tt === 'instrument' ? (track.plugin_name || 'Instrument')
+      : 'Audio';
     ctx.fillText(typeLabel, 10, y + 20, TRACK_HEADER_W - 16);
 
     // Mute/Solo indicators
@@ -216,6 +219,56 @@ function drawVoiceParts(rc: ArrangementRenderContext) {
   });
 }
 
+function drawInstrumentParts(rc: ArrangementRenderContext) {
+  const { ctx, project, viewState } = rc;
+  const ppt = viewState.pixelsPerTick;
+
+  project.instrument_parts.forEach((ip) => {
+    const track = project.tracks[ip.track_no];
+    if (!track) return;
+    const color = '#e8944b'; // orange for instrument tracks
+    const y = RULER_H + ip.track_no * TRACK_LANE_H;
+    const x = TRACK_HEADER_W + ip.position * ppt - viewState.scrollX;
+    const w = ip.duration * ppt;
+
+    if (x + w < TRACK_HEADER_W || x > rc.width) return;
+
+    // Part block
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.25;
+    ctx.fillRect(x, y + 4, w, TRACK_LANE_H - 8);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y + 4, w, TRACK_LANE_H - 8);
+
+    // Mini note density visualization
+    if (ip.notes.length > 0) {
+      const minTone = Math.min(...ip.notes.map(n => n.tone));
+      const maxTone = Math.max(...ip.notes.map(n => n.tone));
+      const toneRange = Math.max(1, maxTone - minTone);
+      const laneH = TRACK_LANE_H - 16;
+
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.7;
+      for (const note of ip.notes) {
+        const nx = x + note.position * ppt;
+        const nw = Math.max(1, note.duration * ppt);
+        const ny = y + 8 + (1 - (note.tone - minTone) / toneRange) * (laneH - 4);
+        if (nx + nw < TRACK_HEADER_W || nx > rc.width) continue;
+        ctx.fillRect(nx, ny, nw, Math.max(1, 3));
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Part name
+    ctx.font = "9px 'DotGothic16', sans-serif";
+    ctx.fillStyle = '#e0e0ff';
+    ctx.textBaseline = 'top';
+    ctx.fillText(ip.name, x + 4, y + 6, w - 8);
+  });
+}
+
 function drawWaveParts(rc: ArrangementRenderContext) {
   const { ctx, project, viewState, peakData } = rc;
   const ppt = viewState.pixelsPerTick;
@@ -273,19 +326,36 @@ function drawWaveParts(rc: ArrangementRenderContext) {
 
 function drawPlayhead(rc: ArrangementRenderContext) {
   const ticks = rc.playheadTicks;
-  if (ticks == null || ticks < 0) return;
+  if (ticks == null) return;
   const { ctx, viewState } = rc;
   const x = TRACK_HEADER_W + ticks * viewState.pixelsPerTick - viewState.scrollX;
-  if (x < TRACK_HEADER_W || x > rc.width) return;
 
-  ctx.save();
-  ctx.strokeStyle = '#ff6b9d';
-  ctx.lineWidth = 2;
-  ctx.shadowColor = '#ff6b9d';
-  ctx.shadowBlur = 6;
-  ctx.beginPath();
-  ctx.moveTo(x, 0);
-  ctx.lineTo(x, rc.height);
-  ctx.stroke();
-  ctx.restore();
+  // Playhead line
+  if (x >= TRACK_HEADER_W && x <= rc.width) {
+    ctx.save();
+    ctx.strokeStyle = '#ff6b9d';
+    ctx.lineWidth = 2;
+    ctx.shadowColor = '#ff6b9d';
+    ctx.shadowBlur = 6;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, rc.height);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Down-triangle on ruler
+  if (x >= TRACK_HEADER_W - 6 && x <= rc.width + 6) {
+    ctx.save();
+    ctx.fillStyle = '#ff6b9d';
+    ctx.shadowColor = '#ff6b9d';
+    ctx.shadowBlur = 4;
+    ctx.beginPath();
+    ctx.moveTo(x - 5, 2);
+    ctx.lineTo(x + 5, 2);
+    ctx.lineTo(x, RULER_H - 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
 }

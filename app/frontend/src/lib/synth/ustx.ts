@@ -46,6 +46,7 @@ export function parseUstx(yamlStr: string): UProject {
     tracks: (raw.tracks ?? []).map(parseTrack),
     voice_parts: (raw.voice_parts ?? []).map(parseVoicePart),
     wave_parts: raw.wave_parts ?? [],
+    instrument_parts: raw.instrument_parts ?? [],
   };
 
   // Version migration: pre-0.6 had scalar bpm/beatPerBar/beatUnit
@@ -173,5 +174,6 @@ export function createDefaultProject(): UProject {
       curves: [],
     }],
     wave_parts: [],
+    instrument_parts: [],
   };
 }

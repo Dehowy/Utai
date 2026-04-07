@@ -2,7 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { useSynthStore, type Tool } from '../../store/synthStore';
 import { RESOLUTION } from '../../types/ustx';
 
-const SNAP_OPTIONS = [
+export const SNAP_OPTIONS = [
   { label: '1/1', ticks: RESOLUTION * 4, group: 'std' },
   { label: '1/2', ticks: RESOLUTION * 2, group: 'std' },
   { label: '1/4', ticks: RESOLUTION, group: 'std' },
@@ -73,7 +73,7 @@ export default function PianoRollToolbar() {
       <span style={{ color: 'var(--text-muted)' }}>|</span>
 
       <label style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-secondary)', fontFamily: 'var(--font-pixel)', fontSize: 11 }}>
-        {t('synth.snap')}:
+        {t('synth.noteType')}:
         <select
           value={viewState.snapTicks}
           onChange={e => setViewState({ snapTicks: Number(e.target.value) })}

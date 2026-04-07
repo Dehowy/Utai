@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, Tray, Menu, nativeImage } = require('electron')
 const path = require('path')
 const net = require('net')
 const { spawn } = require('child_process')
@@ -21,6 +21,8 @@ let mainWindow = null
 let pythonProcess = null
 let backendPort = 8765
 let pendingUtaiFile = null // .utai path queued before renderer is ready
+let tray = null
+app.isQuitting = false
 
 // ── Path helpers ──
 
@@ -177,10 +179,32 @@ function createWindow() {
   // Disable HTTP cache so CSS/JS updates take effect immediately
   mainWindow.webContents.session.clearCache()
 
+  // Prevent navigation to external URLs
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    try {
+      const parsed = new URL(url)
+      if (parsed.hostname !== '127.0.0.1' && parsed.hostname !== 'localhost' && parsed.protocol !== 'file:') {
+        event.preventDefault()
+      }
+    } catch { /* allow */ }
+  })
+
+  // Prevent opening new windows
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+
   // Load the splash screen first
   mainWindow.loadFile(path.join(__dirname, 'loading.html'))
   mainWindow.once('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  // Intercept close to show minimize-to-tray / quit dialog
+  mainWindow.on('close', (event) => {
+    if (app.isQuitting) return
+    event.preventDefault()
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('close-requested', { fromTray: false })
+    }
   })
 
   mainWindow.on('closed', () => {
@@ -240,6 +264,19 @@ ipcMain.handle('dialog:open-folder', async (_event, options) => {
 
 ipcMain.handle('get-backend-port', () => backendPort)
 
+// Close / minimize-to-tray IPC
+ipcMain.on('close-action', (_event, action) => {
+  if (action === 'minimize') {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.hide()
+    }
+  } else if (action === 'quit') {
+    app.isQuitting = true
+    app.quit()
+  }
+  // 'cancel' → do nothing
+})
+
 // ── App lifecycle ──
 
 app.on('second-instance', (_event, argv) => {
@@ -250,6 +287,7 @@ app.on('second-instance', (_event, argv) => {
   }
   if (mainWindow) {
     if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show() // Ensure window is visible (may be hidden to tray)
     mainWindow.focus()
   }
 })
@@ -259,6 +297,37 @@ app.whenReady().then(async () => {
   pendingUtaiFile = extractUtaiPath(process.argv)
 
   createWindow()
+
+  // ── System tray ──
+  try {
+    const iconPath = path.join(__dirname, 'build', 'icon.ico')
+    tray = new Tray(iconPath)
+    tray.setToolTip('Utai')
+    const trayMenu = Menu.buildFromTemplate([
+      { label: '「Utai」', enabled: false },
+      { type: 'separator' },
+      { label: 'Show', click: () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus() } } },
+      { type: 'separator' },
+      { label: 'Quit', click: () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.show()
+          mainWindow.webContents.send('close-requested', { fromTray: true })
+        } else {
+          app.isQuitting = true
+          app.quit()
+        }
+      }},
+    ])
+    tray.setContextMenu(trayMenu)
+    tray.on('click', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show()
+        mainWindow.focus()
+      }
+    })
+  } catch (err) {
+    console.log('[utai] Tray creation skipped:', err.message)
+  }
 
   try {
     backendPort = await findFreePort(8765)
@@ -288,9 +357,11 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
-  app.isQuitting = true
-  killBackend()
-  app.quit()
+  // Only quit if explicitly requested (not just hidden to tray)
+  if (app.isQuitting) {
+    killBackend()
+    app.quit()
+  }
 })
 
 app.on('before-quit', () => {

@@ -4,10 +4,12 @@ import { defaultPitch, defaultVibrato } from '../../types/ustx';
 import { renderPianoRoll, screenToTick, screenToMidi, snapTick, snapTickFloor, tickToScreen, midiToScreen, HEADER_H, KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
 import { hitTest } from '../../lib/synth/noteInteraction';
 import { playNote } from '../../lib/synth/pitchPreview';
+import * as engine from '../../lib/synth/audioEngine';
+import { SNAP_OPTIONS } from './PianoRollToolbar';
 import LyricEditor from './LyricEditor';
 
 interface DragState {
-  mode: 'none' | 'move' | 'resize' | 'draw' | 'select-rect' | 'scroll';
+  mode: 'none' | 'move' | 'resize' | 'draw' | 'select-rect' | 'scroll' | 'playhead';
   startX: number; startY: number; startTick: number; startMidi: number;
   noteId?: string; partIndex?: number; noteIndex?: number;
   origScrollX?: number; origScrollY?: number;
@@ -25,8 +27,85 @@ export default function PianoRollCanvas() {
   const [lyricEdit, setLyricEdit] = useState<{ partIndex: number; noteIndex: number; value: string } | null>(null);
   const [hoverMidi, setHoverMidi] = useState<number | null>(null);
   const [ghostNote, setGhostNote] = useState<GhostNote | null>(null);
+  const [selectRect, setSelectRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [hoverPlayhead, setHoverPlayhead] = useState(false);
   // Track whether lyric editor is open via ref (readable in stale closures)
   const lyricEditRef = useRef(false);
+  // Auto-scroll state for playhead edge-dragging (continuous rAF loop)
+  const autoScrollRef = useRef<{ speed: number; mouseX: number; rafId: number | null }>({ speed: 0, mouseX: 0, rafId: null });
+  // Track right-click on empty area for double-right-click → select tool
+  const lastRightClickRef = useRef<{ time: number; x: number; y: number }>({ time: 0, x: 0, y: 0 });
+
+  /** Start playhead drag with window-level mouse capture (survives canvas exit). */
+  const startPlayheadDrag = useCallback((initialX: number, initialY: number) => {
+    const s = useSynthStore.getState();
+    const tick = Math.max(0, screenToTick(initialX, s.viewState));
+    s.setPlaybackPosition(tick);
+    engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
+    dragRef.current = { mode: 'playhead', startX: initialX, startY: initialY, startTick: tick, startMidi: 0 };
+    autoScrollRef.current.mouseX = initialX;
+
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const edgeMargin = 40;
+
+    const onMove = (ev: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const mx = ev.clientX - rect.left;
+      autoScrollRef.current.mouseX = mx;
+
+      // Update playhead position
+      const st = useSynthStore.getState();
+      if (mx > KEYBOARD_W) {
+        const t = Math.max(0, (mx - KEYBOARD_W + st.viewState.scrollX) / st.viewState.pixelsPerTick);
+        st.setPlaybackPosition(t);
+        engine.seek(engine.ticksToSeconds(t, st.project.tempos));
+      }
+
+      // Determine edge-scroll speed (works even when mouse is outside canvas)
+      let speed = 0;
+      const w = rect.width;
+      if (mx > w - edgeMargin) {
+        speed = Math.min(5, (mx - (w - edgeMargin)) / edgeMargin + 1);
+      } else if (mx < KEYBOARD_W + edgeMargin && st.viewState.scrollX > 0) {
+        speed = -Math.min(5, (KEYBOARD_W + edgeMargin - mx) / edgeMargin + 1);
+      }
+      autoScrollRef.current.speed = speed;
+
+      // Start rAF loop if at edge
+      if (speed !== 0 && autoScrollRef.current.rafId == null) {
+        const frame = () => {
+          const as = autoScrollRef.current;
+          if (as.speed === 0 || dragRef.current.mode !== 'playhead') { as.rafId = null; return; }
+          const cur = useSynthStore.getState();
+          const newScrollX = Math.max(0, cur.viewState.scrollX + as.speed * 6);
+          cur.setViewState({ scrollX: newScrollX });
+          const newTick = Math.max(0, (as.mouseX - KEYBOARD_W + newScrollX) / cur.viewState.pixelsPerTick);
+          cur.setPlaybackPosition(newTick);
+          engine.seek(engine.ticksToSeconds(newTick, cur.project.tempos));
+          as.rafId = requestAnimationFrame(frame);
+        };
+        autoScrollRef.current.rafId = requestAnimationFrame(frame);
+      } else if (speed === 0 && autoScrollRef.current.rafId != null) {
+        cancelAnimationFrame(autoScrollRef.current.rafId);
+        autoScrollRef.current.rafId = null;
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      if (autoScrollRef.current.rafId != null) {
+        cancelAnimationFrame(autoScrollRef.current.rafId);
+        autoScrollRef.current.rafId = null;
+      }
+      autoScrollRef.current.speed = 0;
+      dragRef.current = { mode: 'none', startX: 0, startY: 0, startTick: 0, startMidi: 0 };
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, []);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -47,30 +126,51 @@ export default function PianoRollCanvas() {
     canvas.width = size.width * devicePixelRatio;
     canvas.height = size.height * devicePixelRatio;
     ctx.scale(devicePixelRatio, devicePixelRatio);
+    const instIdx = store.activeInstrumentPartIndex;
+    const instPart = instIdx >= 0 ? store.project.instrument_parts[instIdx] : null;
     renderPianoRoll({
       ctx, width: size.width, height: size.height,
       project: store.project, viewState: store.viewState,
       selectedNotes: store.selectedNotes, activePartIndex: store.activePartIndex,
-      hoverMidi,
-      playheadTicks: store.isPlaying || store.playbackPositionTicks > 0 ? store.playbackPositionTicks : undefined,
+      hoverMidi, hoverPlayhead,
+      playheadTicks: store.playbackPositionTicks,
+      instrumentPart: instPart,
     });
+    // Draw selection rectangle
+    if (selectRect) {
+      const rx = Math.min(selectRect.x1, selectRect.x2);
+      const ry = Math.min(selectRect.y1, selectRect.y2);
+      const rw = Math.abs(selectRect.x2 - selectRect.x1);
+      const rh = Math.abs(selectRect.y2 - selectRect.y1);
+      ctx.fillStyle = 'rgba(155, 109, 255, 0.12)';
+      ctx.fillRect(rx, ry, rw, rh);
+      ctx.strokeStyle = 'rgba(155, 109, 255, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(rx, ry, rw, rh);
+      ctx.setLineDash([]);
+    }
+
     // Draw ghost note preview
     if (ghostNote && !lyricEdit) {
       const vs = store.viewState;
-      const partPos = store.project.voice_parts[store.activePartIndex]?.position ?? 0;
+      const instPartActive = store.activeInstrumentPartIndex >= 0;
+      const partPos = instPartActive
+        ? (store.project.instrument_parts[store.activeInstrumentPartIndex]?.position ?? 0)
+        : (store.project.voice_parts[store.activePartIndex]?.position ?? 0);
       const gx = tickToScreen(partPos + ghostNote.tick, vs);
       const gy = midiToScreen(ghostNote.midi, vs);
       const gw = vs.snapTicks * vs.pixelsPerTick;
       const gh = vs.pixelsPerSemitone;
-      ctx.fillStyle = 'rgba(155, 109, 255, 0.25)';
+      ctx.fillStyle = instPartActive ? 'rgba(232, 148, 75, 0.25)' : 'rgba(155, 109, 255, 0.25)';
       ctx.fillRect(gx, gy + 1, gw - 1, gh - 2);
-      ctx.strokeStyle = 'rgba(155, 109, 255, 0.5)';
+      ctx.strokeStyle = instPartActive ? 'rgba(232, 148, 75, 0.5)' : 'rgba(155, 109, 255, 0.5)';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
       ctx.strokeRect(gx, gy + 1, gw - 1, gh - 2);
       ctx.setLineDash([]);
     }
-  }, [size, store.project, store.viewState, store.selectedNotes, store.activePartIndex, hoverMidi, ghostNote, lyricEdit]);
+  }, [size, store.project, store.viewState, store.selectedNotes, store.activePartIndex, store.activeInstrumentPartIndex, store.playbackPositionTicks, hoverMidi, hoverPlayhead, ghostNote, lyricEdit, selectRect]);
 
   // Convert mouse event to canvas-local CSS-pixel coordinates.
   // Use nativeEvent.offsetX/Y which the browser computes directly,
@@ -95,6 +195,90 @@ export default function PianoRollCanvas() {
 
     const { x, y } = canvasXY(e);
     const s = useSynthStore.getState();
+
+    // Click/drag on ruler header → set playhead position (window-captured drag)
+    if (y < HEADER_H && x > KEYBOARD_W && e.button === 0) {
+      startPlayheadDrag(x, y);
+      return;
+    }
+
+    // Click near playhead line on the grid area → drag playhead (not create note)
+    if (x > KEYBOARD_W && y >= HEADER_H && e.button === 0) {
+      const playheadX = KEYBOARD_W + s.playbackPositionTicks * s.viewState.pixelsPerTick - s.viewState.scrollX;
+      if (Math.abs(x - playheadX) < 8) {
+        startPlayheadDrag(x, y);
+        return;
+      }
+    }
+
+    // ── Instrument mode: simplified note handling ──
+    const instIdx = s.activeInstrumentPartIndex;
+    if (instIdx >= 0) {
+      const instPart = s.project.instrument_parts[instIdx];
+      if (!instPart) return;
+
+      if (x <= KEYBOARD_W) {
+        const midi = Math.ceil(screenToMidi(y, s.viewState));
+        if (midi >= 0 && midi <= 127) playNote(midi, 0.3);
+        return;
+      }
+
+      // Right-click: delete instrument note
+      if (e.button === 2) {
+        // Check if clicking on an instrument note
+        const partPos = instPart.position;
+        const clickTick = screenToTick(x, s.viewState);
+        const clickMidi = Math.ceil(screenToMidi(y, s.viewState));
+        const hitNoteIdx = instPart.notes.findIndex(n =>
+          clickTick >= partPos + n.position && clickTick <= partPos + n.position + n.duration &&
+          clickMidi === n.tone
+        );
+        if (hitNoteIdx >= 0) {
+          s.deleteInstrumentNotes([`i${instIdx}-${hitNoteIdx}`]);
+        }
+        return;
+      }
+
+      if (e.button === 1) {
+        dragRef.current = { mode: 'scroll', startX: e.clientX, startY: e.clientY, startTick: 0, startMidi: 0, origScrollX: s.viewState.scrollX, origScrollY: s.viewState.scrollY };
+        return;
+      }
+
+      // Left click on instrument area
+      if (e.button === 0 && x > KEYBOARD_W && y > HEADER_H) {
+        const partPos = instPart.position;
+        const clickTick = screenToTick(x, s.viewState);
+        const clickMidi = Math.ceil(screenToMidi(y, s.viewState));
+
+        // Check if clicking on an existing instrument note → select it
+        const hitIdx = instPart.notes.findIndex(n =>
+          clickTick >= partPos + n.position &&
+          clickTick <= partPos + n.position + n.duration &&
+          clickMidi === n.tone
+        );
+        if (hitIdx >= 0) {
+          const noteId = `i${instIdx}-${hitIdx}`;
+          s.selectNotes([noteId]);
+          playNote(clickMidi);
+          dragRef.current = { mode: 'move', startX: x, startY: y, startTick: screenToTick(x, s.viewState), startMidi: clickMidi, noteId };
+          return;
+        }
+
+        // Empty area → create new note
+        const rawTick = clickTick - partPos;
+        const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+        playNote(clickMidi);
+        s.addInstrumentNote(instIdx, {
+          position: Math.max(0, snappedTick),
+          duration: s.viewState.snapTicks,
+          tone: Math.max(0, Math.min(127, clickMidi)),
+          velocity: 100,
+        });
+      }
+      return;
+    }
+
+    // ── Vocal mode (existing behavior) ──
     const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
 
     if (hit.type === 'keyboard') {
@@ -103,10 +287,21 @@ export default function PianoRollCanvas() {
       return;
     }
 
-    // Right-click: delete note under cursor
+    // Right-click: delete note under cursor, or double-right-click empty → select tool
     if (e.button === 2) {
       if (hit.type === 'note') {
         s.deleteNotes([hit.noteId]);
+        lastRightClickRef.current = { time: 0, x: 0, y: 0 };
+      } else if (hit.type === 'empty' && x > KEYBOARD_W && y > HEADER_H) {
+        const now = Date.now();
+        const prev = lastRightClickRef.current;
+        if (now - prev.time < 400 && Math.abs(x - prev.x) < 20 && Math.abs(y - prev.y) < 20) {
+          s.setTool('select');
+          s.clearSelection();
+          lastRightClickRef.current = { time: 0, x: 0, y: 0 };
+        } else {
+          lastRightClickRef.current = { time: now, x, y };
+        }
       }
       return;
     }
@@ -124,6 +319,12 @@ export default function PianoRollCanvas() {
       } else if (hit.type === 'empty') {
         s.setTool('draw');
       }
+    } else if (s.activeTool === 'select' && hit.type === 'empty') {
+      // Selection rectangle drag (multi-select)
+      if (!e.shiftKey) s.clearSelection();
+      dragRef.current = { mode: 'select-rect', startX: x, startY: y, startTick: screenToTick(x, s.viewState), startMidi: Math.round(screenToMidi(y, s.viewState)) };
+      setSelectRect({ x1: x, y1: y, x2: x, y2: y });
+      return;
     } else if (hit.type === 'note') {
       if (s.activeTool !== 'select') s.setTool('select');
       const clickedNote = s.project.voice_parts[hit.partIndex]?.notes[hit.noteIndex];
@@ -181,6 +382,7 @@ export default function PianoRollCanvas() {
   const onMouseMove = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = canvasXY(e);
     const s = useSynthStore.getState();
+    const canvas = canvasRef.current;
 
     // Always update hover position for row highlight
     const midi = Math.ceil(screenToMidi(y, s.viewState));
@@ -190,32 +392,81 @@ export default function PianoRollCanvas() {
       setHoverMidi(null);
     }
 
-    // Ghost note preview when hovering empty area (no drag, not over keyboard/header)
+    // Playhead hover detection
     const drag = dragRef.current;
-    if (drag.mode === 'none' && x > KEYBOARD_W && y > HEADER_H) {
-      const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
-      if (hit.type === 'empty') {
-        const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
-        const rawTick = hit.tick - partPos;
-        let snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
-        // Snap to note-end if close
-        const part = s.project.voice_parts[s.activePartIndex];
-        if (part && part.notes.length > 0) {
-          const tolerance = s.viewState.snapTicks * 0.6;
-          for (const n of part.notes) {
-            const noteEnd = n.position + n.duration;
-            if (Math.abs(rawTick - noteEnd) < tolerance) { snappedTick = noteEnd; break; }
-          }
-        }
-        setGhostNote({ tick: Math.max(0, snappedTick), midi: Math.max(0, Math.min(127, hit.midi)) });
+    const playheadX = KEYBOARD_W + s.playbackPositionTicks * s.viewState.pixelsPerTick - s.viewState.scrollX;
+    const nearPlayhead = x > KEYBOARD_W && Math.abs(x - playheadX) < 8;
+    setHoverPlayhead(nearPlayhead);
+
+    // Instrument mode flag
+    const instIdx = s.activeInstrumentPartIndex;
+    const isInstMode = instIdx >= 0;
+
+    // Cursor styling based on hover area
+    if (canvas) {
+      if (drag.mode === 'playhead' || drag.mode === 'scroll') {
+        canvas.style.cursor = drag.mode === 'playhead' ? 'col-resize' : 'grabbing';
+      } else if (drag.mode !== 'none') {
+        canvas.style.cursor = drag.mode === 'resize' ? 'col-resize' : 'default';
+      } else if (y < HEADER_H && x > KEYBOARD_W) {
+        canvas.style.cursor = 'col-resize';
+      } else if (nearPlayhead) {
+        canvas.style.cursor = 'col-resize';
+      } else if (x <= KEYBOARD_W) {
+        canvas.style.cursor = 'pointer';
+      } else if (isInstMode) {
+        canvas.style.cursor = 'crosshair';
       } else {
-        setGhostNote(null);
+        const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
+        if (hit.type === 'resize') canvas.style.cursor = 'col-resize';
+        else if (hit.type === 'note') canvas.style.cursor = 'move';
+        else canvas.style.cursor = s.activeTool === 'draw' ? 'crosshair' : 'default';
+      }
+    }
+
+    // Ghost note preview when hovering empty area (no drag, not over keyboard/header)
+    if (drag.mode === 'none' && x > KEYBOARD_W && y > HEADER_H) {
+      if (isInstMode) {
+        // Instrument mode: simple snap, no voice-part hitTest
+        const instPart = s.project.instrument_parts[instIdx];
+        const partPos = instPart?.position ?? 0;
+        const rawTick = screenToTick(x, s.viewState) - partPos;
+        const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+        const gMidi = Math.max(0, Math.min(127, Math.ceil(screenToMidi(y, s.viewState))));
+        setGhostNote({ tick: Math.max(0, snappedTick), midi: gMidi });
+      } else {
+        const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
+        if (hit.type === 'empty') {
+          const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
+          const rawTick = hit.tick - partPos;
+          let snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+          const part = s.project.voice_parts[s.activePartIndex];
+          if (part && part.notes.length > 0) {
+            const tolerance = s.viewState.snapTicks * 0.6;
+            for (const n of part.notes) {
+              const noteEnd = n.position + n.duration;
+              if (Math.abs(rawTick - noteEnd) < tolerance) { snappedTick = noteEnd; break; }
+            }
+          }
+          setGhostNote({ tick: Math.max(0, snappedTick), midi: Math.max(0, Math.min(127, hit.midi)) });
+        } else {
+          setGhostNote(null);
+        }
       }
     } else {
       setGhostNote(null);
     }
 
     if (drag.mode === 'none') return;
+
+    // Playhead drag is handled by window-level listeners (startPlayheadDrag),
+    // so skip it here to avoid duplicate handling.
+    if (drag.mode === 'playhead') return;
+
+    if (drag.mode === 'select-rect') {
+      setSelectRect(prev => prev ? { ...prev, x2: x, y2: y } : null);
+      return;
+    }
 
     if (drag.mode === 'scroll') {
       const dx = e.clientX - drag.startX;
@@ -252,8 +503,42 @@ export default function PianoRollCanvas() {
   }, []);
 
   const onMouseUp = useCallback(() => {
+    // Stop auto-scroll
+    if (autoScrollRef.current.rafId != null) {
+      cancelAnimationFrame(autoScrollRef.current.rafId);
+      autoScrollRef.current.rafId = null;
+    }
+    autoScrollRef.current.speed = 0;
+
+    const drag = dragRef.current;
+    if (drag.mode === 'select-rect' && selectRect) {
+      // Find notes within rectangle
+      const s = useSynthStore.getState();
+      const minX = Math.min(selectRect.x1, selectRect.x2);
+      const maxX = Math.max(selectRect.x1, selectRect.x2);
+      const minY = Math.min(selectRect.y1, selectRect.y2);
+      const maxY = Math.max(selectRect.y1, selectRect.y2);
+
+      const minTick = screenToTick(minX, s.viewState);
+      const maxTick = screenToTick(maxX, s.viewState);
+      const topMidi = Math.ceil(screenToMidi(minY, s.viewState));
+      const botMidi = Math.floor(screenToMidi(maxY, s.viewState));
+
+      const ids: string[] = [];
+      s.project.voice_parts.forEach((part, pi) => {
+        part.notes.forEach((note, ni) => {
+          const absPos = part.position + note.position;
+          const absEnd = absPos + note.duration;
+          if (absEnd >= minTick && absPos <= maxTick && note.tone >= botMidi && note.tone <= topMidi) {
+            ids.push(`${pi}-${ni}`);
+          }
+        });
+      });
+      if (ids.length > 0) s.selectNotes(ids);
+      setSelectRect(null);
+    }
     dragRef.current = { mode: 'none', startX: 0, startY: 0, startTick: 0, startMidi: 0 };
-  }, []);
+  }, [selectRect]);
 
   const onDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
     const { x, y } = canvasXY(e);
@@ -265,6 +550,30 @@ export default function PianoRollCanvas() {
         lyricEditRef.current = true;
         setLyricEdit({ partIndex: hit.partIndex, noteIndex: hit.noteIndex, value: note.lyric });
       }
+    } else if (hit.type === 'empty' && y > HEADER_H && x > KEYBOARD_W) {
+      // Double-click empty area in select mode → switch to draw and create note
+      s.setTool('draw');
+      const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
+      const rawTick = hit.tick - partPos;
+      const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+      const midi = Math.max(0, Math.min(127, hit.midi));
+      playNote(midi);
+      const notePos = Math.max(0, snappedTick);
+      s.addNote(s.activePartIndex, {
+        position: notePos, duration: s.viewState.snapTicks, tone: midi, lyric: 'a',
+        pitch: defaultPitch(), vibrato: defaultVibrato(), tuning: 0, phoneme_expressions: [], phoneme_overrides: [],
+      });
+      const partIdx = s.activePartIndex;
+      requestAnimationFrame(() => {
+        const updatedPart = useSynthStore.getState().project.voice_parts[partIdx];
+        if (updatedPart) {
+          const ni = updatedPart.notes.findIndex(n => n.position === notePos && n.tone === midi);
+          if (ni >= 0) {
+            lyricEditRef.current = true;
+            setLyricEdit({ partIndex: partIdx, noteIndex: ni, value: 'a' });
+          }
+        }
+      });
     }
   }, []);
 
@@ -274,7 +583,13 @@ export default function PianoRollCanvas() {
     const handler = (e: WheelEvent) => {
       e.preventDefault();
       const s = useSynthStore.getState();
-      if (e.ctrlKey) {
+      if (e.altKey) {
+        // Alt+wheel → cycle note type (snap)
+        const curIdx = SNAP_OPTIONS.findIndex(o => o.ticks === s.viewState.snapTicks);
+        const dir = e.deltaY > 0 ? 1 : -1;
+        const newIdx = Math.max(0, Math.min(SNAP_OPTIONS.length - 1, (curIdx === -1 ? 2 : curIdx) + dir));
+        s.setViewState({ snapTicks: SNAP_OPTIONS[newIdx].ticks });
+      } else if (e.ctrlKey) {
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
         s.setViewState({ pixelsPerTick: Math.max(0.05, Math.min(5, s.viewState.pixelsPerTick * factor)) });
       } else {
@@ -319,7 +634,11 @@ export default function PianoRollCanvas() {
         ref={canvasRef}
         style={{ width: size.width, height: size.height, display: 'block' }}
         onMouseDown={onMouseDown} onMouseMove={onMouseMove} onMouseUp={onMouseUp}
-        onMouseLeave={() => { onMouseUp(); setHoverMidi(null); setGhostNote(null); }} onDoubleClick={onDoubleClick}
+        onMouseLeave={() => {
+          // Don't cancel playhead drag on leave — it's handled by window listeners
+          if (dragRef.current.mode !== 'playhead') onMouseUp();
+          setHoverMidi(null); setGhostNote(null); setHoverPlayhead(false); setSelectRect(null);
+        }} onDoubleClick={onDoubleClick}
         onContextMenu={e => e.preventDefault()}
       />
       {lyricEdit && <LyricEditor x={lyricPos.x} y={lyricPos.y} value={lyricEdit.value} onConfirm={onLyricConfirm} onCancel={closeLyricEditor} />}

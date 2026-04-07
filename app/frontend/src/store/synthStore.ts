@@ -3,7 +3,7 @@
  */
 
 import { create } from 'zustand';
-import type { UProject, UNote, UWavePart } from '../types/ustx';
+import type { UProject, UNote, UWavePart, UInstrumentNote, UInstrumentPart } from '../types/ustx';
 import type { TrackEffect } from '../lib/synth/effects';
 import { RESOLUTION } from '../types/ustx';
 import { createDefaultProject } from '../lib/synth/ustx';
@@ -45,6 +45,7 @@ interface SynthState {
   selectedNotes: Set<string>;
   activeTool: Tool;
   activePartIndex: number;
+  activeInstrumentPartIndex: number;  // -1 = no instrument part active, >= 0 = editing instrument part
 
   // View
   viewState: ViewState;
@@ -95,6 +96,7 @@ interface SynthState {
   selectAll: () => void;
   clearSelection: () => void;
   setActivePart: (partIndex: number) => void;
+  setActiveInstrumentPart: (partIndex: number) => void;
 
   // Actions - Models
   setSingerModel: (singer: string) => void;
@@ -116,7 +118,7 @@ interface SynthState {
   setTrackAudioUrl: (trackIndex: number, url: string) => void;
 
   // Actions - Track management
-  addTrack: (type: 'vocal' | 'audio', name?: string) => void;
+  addTrack: (type: 'vocal' | 'audio' | 'instrument', name?: string) => void;
   removeTrack: (trackIndex: number) => void;
   setTrackMute: (trackIndex: number, mute: boolean) => void;
   setTrackSolo: (trackIndex: number, solo: boolean) => void;
@@ -124,6 +126,14 @@ interface SynthState {
   setTrackPan: (trackIndex: number, pan: number) => void;
   addWavePart: (trackNo: number, wavePart: UWavePart) => void;
   moveWavePart: (partIndex: number, newPosition: number) => void;
+
+  // Actions - Instrument parts
+  addInstrumentNote: (partIndex: number, note: UInstrumentNote) => void;
+  updateInstrumentNote: (partIndex: number, noteIndex: number, changes: Partial<UInstrumentNote>) => void;
+  deleteInstrumentNotes: (noteIds: string[]) => void;
+  moveInstrumentNotes: (noteIds: string[], deltaTick: number, deltaTone: number) => void;
+  resizeInstrumentNote: (partIndex: number, noteIndex: number, newDuration: number) => void;
+  setTrackPlugin: (trackIndex: number, pluginName: string) => void;
 
   // Actions - Effects
   addEffect: (trackIndex: number, effect: TrackEffect) => void;
@@ -151,6 +161,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   selectedNotes: new Set<string>(),
   activeTool: 'draw' as Tool,
   activePartIndex: 0,
+  activeInstrumentPartIndex: -1,
   viewState: {
     scrollX: 0,
     scrollY: 60 * 20 - 200,
@@ -190,6 +201,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     redoStack: [],
     selectedNotes: new Set(),
     activePartIndex: 0,
+  activeInstrumentPartIndex: -1,
     renderedUrl: null,
     finalUrl: null,
     renderError: '',
@@ -320,7 +332,8 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     return { selectedNotes: all };
   }),
   clearSelection: () => set({ selectedNotes: new Set() }),
-  setActivePart: (partIndex) => set({ activePartIndex: partIndex }),
+  setActivePart: (partIndex) => set({ activePartIndex: partIndex, activeInstrumentPartIndex: -1 }),
+  setActiveInstrumentPart: (partIndex) => set({ activeInstrumentPartIndex: partIndex }),
 
   // Model actions
   setSingerModel: (singer) => set({ singer }),
@@ -368,6 +381,14 @@ export const useSynthStore = create<SynthState>((set, get) => ({
         notes: [],
         curves: [],
       });
+    } else if (type === 'instrument') {
+      project.instrument_parts.push({
+        name: `Inst ${idx + 1}`,
+        track_no: idx,
+        position: 0,
+        duration: RESOLUTION * 16,
+        notes: [],
+      });
     }
     return { ...stacks, project, dirty: true };
   }),
@@ -381,6 +402,8 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       .map(vp => ({ ...vp, track_no: vp.track_no > trackIndex ? vp.track_no - 1 : vp.track_no }));
     project.wave_parts = project.wave_parts.filter(wp => wp.track_no !== trackIndex)
       .map(wp => ({ ...wp, track_no: wp.track_no > trackIndex ? wp.track_no - 1 : wp.track_no }));
+    project.instrument_parts = project.instrument_parts.filter(ip => ip.track_no !== trackIndex)
+      .map(ip => ({ ...ip, track_no: ip.track_no > trackIndex ? ip.track_no - 1 : ip.track_no }));
     const newPartIdx = Math.min(state.activePartIndex, project.voice_parts.length - 1);
     return { ...stacks, project, dirty: true, activePartIndex: Math.max(0, newPartIdx) };
   }),
@@ -421,6 +444,70 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     const project = cloneProject(state.project);
     if (project.wave_parts[partIndex]) {
       project.wave_parts[partIndex].position = Math.max(0, newPosition);
+    }
+    return { ...stacks, project, dirty: true };
+  }),
+
+  // Instrument parts
+  addInstrumentNote: (partIndex, note) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.instrument_parts[partIndex];
+    if (part) {
+      part.notes.push(note);
+      part.notes.sort((a, b) => a.position - b.position);
+      part.duration = Math.max(part.duration, note.position + note.duration + RESOLUTION * 4);
+    }
+    return { ...stacks, project, dirty: true };
+  }),
+
+  updateInstrumentNote: (partIndex, noteIndex, changes) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const part = project.instrument_parts[partIndex];
+    if (part?.notes[noteIndex]) {
+      Object.assign(part.notes[noteIndex], changes);
+    }
+    return { ...stacks, project, dirty: true };
+  }),
+
+  deleteInstrumentNotes: (noteIds) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    const toDelete = new Set(noteIds);
+    project.instrument_parts.forEach((part, pi) => {
+      part.notes = part.notes.filter((_, ni) => !toDelete.has(`i${pi}-${ni}`));
+    });
+    return { ...stacks, project, dirty: true, selectedNotes: new Set<string>() };
+  }),
+
+  moveInstrumentNotes: (noteIds, deltaTick, deltaTone) => set((state) => {
+    const project = cloneProject(state.project);
+    for (const id of noteIds) {
+      const m = id.match(/^i(\d+)-(\d+)$/);
+      if (!m) continue;
+      const [, pi, ni] = m.map(Number);
+      const note = project.instrument_parts[pi]?.notes[ni];
+      if (note) {
+        note.position = Math.max(0, note.position + deltaTick);
+        note.tone = Math.max(0, Math.min(127, note.tone + deltaTone));
+      }
+    }
+    return { project, dirty: true };
+  }),
+
+  resizeInstrumentNote: (partIndex, noteIndex, newDuration) => set((state) => {
+    const project = cloneProject(state.project);
+    const note = project.instrument_parts[partIndex]?.notes[noteIndex];
+    if (note) note.duration = Math.max(10, newDuration);
+    return { project, dirty: true };
+  }),
+
+  setTrackPlugin: (trackIndex, pluginName) => set((state) => {
+    const stacks = pushUndo(state);
+    const project = cloneProject(state.project);
+    if (project.tracks[trackIndex]) {
+      project.tracks[trackIndex].plugin_name = pluginName;
     }
     return { ...stacks, project, dirty: true };
   }),

@@ -43,6 +43,7 @@ class _SynthLogHandler(logging.Handler):
 _synth_handler = _SynthLogHandler()
 _synth_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(levelname)s: %(message)s"))
 logging.getLogger("utai.synth").addHandler(_synth_handler)
+logging.getLogger("utai.vst").addHandler(_synth_handler)
 
 _CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 

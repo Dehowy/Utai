@@ -2,6 +2,7 @@ import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import { parseUstx, serializeUstx } from '../../lib/synth/ustx';
+import { utaiAlert, utaiConfirm } from '../UtaiAlert';
 
 export default function SynthProjectMenu() {
   const { t } = useTranslation();
@@ -20,7 +21,7 @@ export default function SynthProjectMenu() {
         const proj = parseUstx(reader.result as string);
         loadProject(proj);
       } catch (err) {
-        alert(`Failed to load .ustx: ${err}`);
+        utaiAlert(`Failed to load .ustx: ${err}`);
       }
     };
     reader.readAsText(file);
@@ -37,8 +38,8 @@ export default function SynthProjectMenu() {
     URL.revokeObjectURL(a.href);
   };
 
-  const handleNew = () => {
-    if (dirty && !confirm(t('synth.discardChanges'))) return;
+  const handleNew = async () => {
+    if (dirty && !(await utaiConfirm(t('synth.discardChanges')))) return;
     newProject();
   };
 

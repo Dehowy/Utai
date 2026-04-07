@@ -67,6 +67,16 @@ RVC/**/assets/rmvpe/*.pth
 RVC/**/assets/rmvpe/*.onnx
 RVC/**/assets/*.pth
 
+# VST plugins (user-managed — large binaries, samples, state files)
+# Raw plugin directories (users bring their own .dll/.vst3)
+VST/4fpiano-win/
+VST/AmpleBass/
+VST/AmpleGuitar/
+VST/MTPDK*/
+VST/Sonatina_*/
+# Imported plugins (generated on import — user-specific)
+VST/instruments/*/
+
 # Synth (UtaiSynth — DiffSinger + OpenUtau integration)
 # Pre-compiled renderer binaries (large, platform-specific, rebuild from utai-renderer-src/)
 synth/utai-renderer/**/*.exe

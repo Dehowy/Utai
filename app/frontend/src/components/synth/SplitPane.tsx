@@ -4,9 +4,10 @@ interface Props {
   left: ReactNode;
   right: ReactNode;
   defaultLeftWidth?: number;
+  rightCollapsed?: boolean;
 }
 
-export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props) {
+export default function SplitPane({ left, right, defaultLeftWidth = 65, rightCollapsed }: Props) {
   const [leftWidth, setLeftWidth] = useState(defaultLeftWidth);
   const dragging = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -31,7 +32,6 @@ export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props)
     document.body.style.userSelect = '';
   }, []);
 
-  // Use global listeners so drag doesn't break when cursor escapes the container
   useEffect(() => {
     window.addEventListener('mousemove', onMouseMove);
     window.addEventListener('mouseup', onMouseUp);
@@ -41,11 +41,18 @@ export default function SplitPane({ left, right, defaultLeftWidth = 65 }: Props)
     };
   }, [onMouseMove, onMouseUp]);
 
+  if (rightCollapsed) {
+    return (
+      <div ref={containerRef} className="utai-synth-split" style={{ display: 'flex' }}>
+        <div style={{ width: '100%', minWidth: 0, overflow: 'hidden', height: '100%' }}>
+          {left}
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div
-      ref={containerRef}
-      className="utai-synth-split"
-    >
+    <div ref={containerRef} className="utai-synth-split">
       <div style={{ width: `${leftWidth}%`, minWidth: 0, overflow: 'hidden', height: '100%' }}>
         {left}
       </div>

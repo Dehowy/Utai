@@ -21,6 +21,11 @@ OUTPUT_DIR = APP_ROOT / "output"
 WORKFLOWS_DIR = APP_ROOT / "workflows"
 STATIC_DIR = APP_ROOT / "backend" / "static"
 
+# VST paths
+VST_ROOT = PROJECT_ROOT / "VST"
+VST_INSTRUMENTS_DIR = VST_ROOT / "instruments"  # managed/imported plugins
+VST_INSTRUMENTS_DIR.mkdir(parents=True, exist_ok=True)
+
 # Synth paths
 SYNTH_ROOT = PROJECT_ROOT / "synth"
 SYNTH_RENDERER_DIR = SYNTH_ROOT / "utai-renderer"

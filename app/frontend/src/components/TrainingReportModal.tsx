@@ -53,8 +53,6 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
   const { t } = useTranslation()
   const logs = useTrainingStore((s) => s.logs)
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [cleaning, setCleaning] = useState(false)
-  const [cleaned, setCleaned] = useState(false)
   const [cleanResult, setCleanResult] = useState('')
   const [metric, setMetric] = useState<'loss_mel' | 'loss_disc' | 'loss_gen' | 'loss_fm' | 'loss_kl'>('loss_mel')
 
@@ -81,6 +79,20 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
     const m = line.match(/Train Epoch:\s*(\d+)/)
     if (m) totalEpochs = Math.max(totalEpochs, parseInt(m[1], 10))
   }
+
+  // Auto-cleanup training data when report opens
+  useEffect(() => {
+    if (!open || !expName) return
+    let cancelled = false
+    cleanupTrainingData(expName)
+      .then((result) => {
+        if (!cancelled) setCleanResult(result.freed_formatted || '0 B')
+      })
+      .catch(() => {
+        if (!cancelled) setCleanResult('')
+      })
+    return () => { cancelled = true }
+  }, [open, expName])
 
   // Draw chart
   useEffect(() => {
@@ -168,18 +180,6 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
     ctx.textAlign = 'center'
     ctx.fillText(metric, w / 2, 14)
   }, [open, points, metric])
-
-  const handleCleanup = useCallback(async () => {
-    setCleaning(true)
-    try {
-      const result = await cleanupTrainingData(expName)
-      setCleaned(true)
-      setCleanResult(result.freed_formatted)
-    } catch (e: any) {
-      setCleanResult('Error: ' + e.message)
-    }
-    setCleaning(false)
-  }, [expName])
 
   const handleExportChart = useCallback(() => {
     if (!canvasRef.current) return
@@ -293,9 +293,9 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
           </>
         )}
 
-        {/* Actions */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 10, gap: 6 }}>
-          <div style={{ display: 'flex', gap: 6 }}>
+        {/* Auto-cleanup status + actions */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 10, gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             {points.length > 0 && (
               <button
                 className="utai-btn utai-btn--save"
@@ -305,19 +305,11 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
                 {t('train.exportChart')}
               </button>
             )}
-            <button
-              className="utai-btn"
-              style={{
-                fontSize: 9,
-                padding: '3px 10px',
-                borderColor: 'var(--accent-orange)',
-                color: cleaned ? 'var(--text-dim)' : 'var(--accent-orange)',
-              }}
-              onClick={handleCleanup}
-              disabled={cleaning || cleaned}
-            >
-              {cleaning ? '...' : cleaned ? `${t('train.report.cleaned')} (${cleanResult})` : t('train.report.cleanData')}
-            </button>
+            {cleanResult && (
+              <span style={{ fontSize: 9, color: 'var(--text-dim)' }}>
+                {t('train.report.autoClean', { size: cleanResult })}
+              </span>
+            )}
           </div>
           <button
             className="utai-btn"

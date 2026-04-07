@@ -9,6 +9,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getBackendPort: () => ipcRenderer.invoke('get-backend-port'),
 
   onOpenUtaiFile: (callback) => {
-    ipcRenderer.on('open-utai-file', (_event, filePath) => callback(filePath))
+    const handler = (_event, filePath) => callback(filePath)
+    ipcRenderer.on('open-utai-file', handler)
+    return () => ipcRenderer.removeListener('open-utai-file', handler)
+  },
+
+  // Close / minimize-to-tray
+  onCloseRequested: (callback) => {
+    const handler = (_event, data) => callback(data)
+    ipcRenderer.on('close-requested', handler)
+    return () => ipcRenderer.removeListener('close-requested', handler)
+  },
+  sendCloseAction: (action) => {
+    ipcRenderer.send('close-action', action)
   },
 })

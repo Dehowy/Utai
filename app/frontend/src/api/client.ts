@@ -9,7 +9,9 @@ declare global {
       saveFile: (options?: any) => Promise<string | null>
       openFolder: (options?: any) => Promise<string | null>
       getBackendPort: () => Promise<number>
-      onOpenUtaiFile: (callback: (filePath: string) => void) => void
+      onOpenUtaiFile: (callback: (filePath: string) => void) => (() => void) | void
+      onCloseRequested: (callback: (data: { fromTray: boolean }) => void) => (() => void) | void
+      sendCloseAction: (action: 'minimize' | 'quit' | 'cancel') => void
     }
   }
 }
@@ -259,6 +261,46 @@ export const removeBuffers = (bufferIds: string[]) =>
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(bufferIds),
+  })
+
+// VST plugins
+export const getVSTPlugins = () =>
+  fetchJSON<any[]>('/api/vst/list')
+
+export const importVSTPlugin = (path: string, name?: string) =>
+  fetchJSON<any>('/api/vst/import', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, name }),
+  })
+
+export const deleteVSTPlugin = (name: string) =>
+  fetchJSON<any>(`/api/vst/${encodeURIComponent(name)}`, { method: 'DELETE' })
+
+export const getVSTParams = (name: string) =>
+  fetchJSON<any[]>(`/api/vst/params/${encodeURIComponent(name)}`)
+
+export const openVSTEditor = (name: string) =>
+  fetchJSON<any>(`/api/vst/editor/open/${encodeURIComponent(name)}`, { method: 'POST' })
+
+export const closeVSTEditor = (name: string) =>
+  fetchJSON<any>(`/api/vst/editor/close/${encodeURIComponent(name)}`, { method: 'POST' })
+
+export const renderVST = (data: {
+  plugin_name: string;
+  notes: { tone: number; velocity: number; start: number; duration: number }[];
+  bpm: number;
+  duration?: number;
+  sample_rate?: number;
+  params?: Record<number, number>;
+}) =>
+  fetch(`${API_BASE}/api/vst/render`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  }).then(r => {
+    if (!r.ok) throw new Error(`VST render failed: ${r.status}`)
+    return r.blob()
   })
 
 export const cleanupTrainingData = (expName: string) =>

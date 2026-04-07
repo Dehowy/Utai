@@ -481,6 +481,23 @@ body {
   background: rgba(92, 224, 216, 0.2);
 }
 
+/* --- Close Dialog Option Buttons --- */
+.utai-close-option {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 10px 14px;
+  border: 1px solid var(--border-mid);
+  background: transparent;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.utai-close-option:hover {
+  border-color: var(--accent-cyan);
+  background: rgba(92, 224, 216, 0.06);
+}
+
 /* --- Project Manager --- */
 .utai-project-manager {
   min-width: 460px;
@@ -2431,6 +2448,44 @@ input[type="checkbox"]:focus {
   border-radius: 3px;
   overflow: hidden;
   background: rgba(13, 13, 26, 0.6);
+}
+
+/* --- Synth Context Menu --- */
+.utai-synth-ctx-menu {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-mid);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  min-width: 140px;
+  padding: 4px 0;
+}
+.utai-synth-ctx-menu__item {
+  display: block;
+  width: 100%;
+  padding: 5px 14px;
+  font-family: var(--font-pixel);
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: none;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.1s;
+}
+.utai-synth-ctx-menu__item:hover {
+  background: rgba(155, 109, 255, 0.15);
+  color: #fff;
+}
+.utai-synth-ctx-menu__item--danger {
+  color: #e05555;
+}
+.utai-synth-ctx-menu__item--danger:hover {
+  background: rgba(224, 85, 85, 0.15);
+  color: #ff7777;
+}
+.utai-synth-ctx-menu__sep {
+  height: 1px;
+  background: var(--border-dim);
+  margin: 3px 8px;
 }
 
 /* Hide number input spinner arrows */

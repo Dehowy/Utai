@@ -6,6 +6,9 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import { renderArrangement, TRACK_HEADER_W, TRACK_LANE_H, RULER_H } from '../../lib/synth/arrangementEngine';
+import * as engine from '../../lib/synth/audioEngine';
+
+type ArrDragMode = 'none' | 'playhead';
 
 export default function ArrangementView() {
   const { t } = useTranslation();
@@ -13,6 +16,8 @@ export default function ArrangementView() {
   const containerRef = useRef<HTMLDivElement>(null);
   const store = useSynthStore();
   const [size, setSize] = useState({ width: 800, height: 400 });
+  const dragMode = useRef<ArrDragMode>('none');
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; trackIdx: number } | null>(null);
 
   // ResizeObserver
   useEffect(() => {
@@ -39,7 +44,7 @@ export default function ArrangementView() {
       ctx, width: size.width, height: size.height,
       project: store.project, viewState: store.viewState,
       activePartIndex: store.activePartIndex,
-      playheadTicks: store.isPlaying || store.playbackPositionTicks > 0 ? store.playbackPositionTicks : undefined,
+      playheadTicks: store.playbackPositionTicks,
     });
   });
 
@@ -56,13 +61,70 @@ export default function ArrangementView() {
     const trackIdx = Math.floor((y - RULER_H) / TRACK_LANE_H);
     if (trackIdx < 0 || trackIdx >= store.project.tracks.length) return;
 
-    // Find voice part for this track
+    // Find voice part or instrument part for this track
     const vpIdx = store.project.voice_parts.findIndex(vp => vp.track_no === trackIdx);
     if (vpIdx >= 0) {
       useSynthStore.getState().setActivePart(vpIdx);
       useSynthStore.getState().setViewMode('pianoroll');
+      return;
+    }
+    const ipIdx = store.project.instrument_parts.findIndex(ip => ip.track_no === trackIdx);
+    if (ipIdx >= 0) {
+      useSynthStore.getState().setActiveInstrumentPart(ipIdx);
+      useSynthStore.getState().setViewMode('pianoroll');
     }
   }, [store.project]);
+
+  // Mouse down — ruler click sets playhead, start drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    if (e.button !== 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Click on ruler → set playhead and start dragging
+    if (y < RULER_H && x > TRACK_HEADER_W) {
+      const s = useSynthStore.getState();
+      const tick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      s.setPlaybackPosition(tick);
+      engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
+      dragMode.current = 'playhead';
+      return;
+    }
+  }, []);
+
+  // Mouse move — drag playhead + cursor styling
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Cursor styling
+    if (dragMode.current === 'playhead') {
+      canvas.style.cursor = 'col-resize';
+    } else if (y < RULER_H && x > TRACK_HEADER_W) {
+      canvas.style.cursor = 'col-resize';
+    } else {
+      canvas.style.cursor = 'default';
+    }
+
+    if (dragMode.current !== 'playhead') return;
+    if (x > TRACK_HEADER_W) {
+      const s = useSynthStore.getState();
+      const tick = Math.max(0, (x - TRACK_HEADER_W + s.viewState.scrollX) / s.viewState.pixelsPerTick);
+      s.setPlaybackPosition(tick);
+      engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
+    }
+  }, []);
+
+  // Mouse up — end drag
+  const handleMouseUp = useCallback(() => {
+    dragMode.current = 'none';
+  }, []);
 
   // Click on track header → select track
   const handleClick = useCallback((e: React.MouseEvent) => {
@@ -89,10 +151,24 @@ export default function ArrangementView() {
     }
   }, [store.project]);
 
-  // Right-click context actions
+  // Right-click context menu
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
-    // Could add context menu here in the future
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Determine which track was right-clicked
+    const trackIdx = y >= RULER_H ? Math.floor((y - RULER_H) / TRACK_LANE_H) : -1;
+    const validTrack = trackIdx >= 0 && trackIdx < useSynthStore.getState().project.tracks.length;
+
+    setContextMenu({
+      x: e.clientX,
+      y: e.clientY,
+      trackIdx: validTrack ? trackIdx : -1,
+    });
   }, []);
 
   // Wheel scroll
@@ -115,6 +191,21 @@ export default function ArrangementView() {
   // Track management buttons
   const addVocalTrack = () => store.addTrack('vocal');
   const addAudioTrack = () => store.addTrack('audio');
+  const addInstrumentTrack = () => store.addTrack('instrument');
+
+  // Close context menu
+  const closeContextMenu = useCallback(() => setContextMenu(null), []);
+
+  // Context menu actions
+  const ctxAddVocal = useCallback(() => { store.addTrack('vocal'); closeContextMenu(); }, [store, closeContextMenu]);
+  const ctxAddAudio = useCallback(() => { store.addTrack('audio'); closeContextMenu(); }, [store, closeContextMenu]);
+  const ctxAddInstrument = useCallback(() => { store.addTrack('instrument'); closeContextMenu(); }, [store, closeContextMenu]);
+  const ctxDeleteTrack = useCallback(() => {
+    if (contextMenu && contextMenu.trackIdx >= 0) {
+      store.removeTrack(contextMenu.trackIdx);
+    }
+    closeContextMenu();
+  }, [store, contextMenu, closeContextMenu]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
@@ -126,17 +217,57 @@ export default function ArrangementView() {
         <button className="utai-synth-arrangement__action-btn" onClick={addAudioTrack}>
           + {t('synth.track.addAudio')}
         </button>
+        <button className="utai-synth-arrangement__action-btn" onClick={addInstrumentTrack} style={{ color: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}>
+          + {t('synth.track.addInstrument')}
+        </button>
       </div>
       {/* Canvas */}
       <div ref={containerRef} style={{ flex: 1, overflow: 'hidden', position: 'relative' }}>
         <canvas
           ref={canvasRef}
-          style={{ width: size.width, height: size.height, display: 'block' }}
+          style={{ width: size.width, height: size.height, display: 'block', cursor: dragMode.current === 'playhead' ? 'col-resize' : undefined }}
           onClick={handleClick}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
           onDoubleClick={handleDoubleClick}
           onContextMenu={handleContextMenu}
           onWheel={handleWheel}
         />
+        {/* Context menu */}
+        {contextMenu && (
+          <>
+            <div className="utai-modal-backdrop" onClick={closeContextMenu} onContextMenu={e => { e.preventDefault(); closeContextMenu(); }} style={{ zIndex: 800, background: 'transparent' }} />
+            <div
+              className="utai-synth-ctx-menu"
+              style={{
+                position: 'fixed',
+                left: contextMenu.x,
+                top: contextMenu.y,
+                zIndex: 801,
+              }}
+            >
+              <button className="utai-synth-ctx-menu__item" onClick={ctxAddVocal}>
+                + {t('synth.track.addVocal')}
+              </button>
+              <button className="utai-synth-ctx-menu__item" onClick={ctxAddAudio}>
+                + {t('synth.track.addAudio')}
+              </button>
+              <button className="utai-synth-ctx-menu__item" onClick={ctxAddInstrument}>
+                + {t('synth.track.addInstrument')}
+              </button>
+              {contextMenu.trackIdx >= 0 && store.project.tracks.length > 1 && (
+                <>
+                  <div className="utai-synth-ctx-menu__sep" />
+                  <button className="utai-synth-ctx-menu__item utai-synth-ctx-menu__item--danger" onClick={ctxDeleteTrack}>
+                    {t('synth.track.delete')}
+                  </button>
+                </>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

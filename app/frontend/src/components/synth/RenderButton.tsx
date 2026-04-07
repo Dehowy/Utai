@@ -2,6 +2,9 @@ import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import { serializeUstx } from '../../lib/synth/ustx';
+import { RESOLUTION } from '../../types/ustx';
+import { renderVST } from '../../api/client';
+import * as engine from '../../lib/synth/audioEngine';
 
 export default function RenderButton() {
   const { t } = useTranslation();
@@ -19,7 +22,9 @@ export default function RenderButton() {
   const markClean = useSynthStore(s => s.markClean);
   const abortRef = useRef<AbortController | null>(null);
 
+  const setTrackAudioUrl = useSynthStore(s => s.setTrackAudioUrl);
   const hasNotes = project.voice_parts.some(p => p.notes.length > 0);
+  const hasInstrumentNotes = project.instrument_parts.some(p => p.notes.length > 0);
 
   const handleStop = async () => {
     abortRef.current?.abort();
@@ -32,16 +37,17 @@ export default function RenderButton() {
   const handleRender = async () => {
     setRenderError('');
 
-    if (!singer) { setRenderError(t('synth.selectSingerFirst')); return; }
-    if (!hasNotes) { setRenderError(t('synth.noNotes')); return; }
+    if (!singer && !hasInstrumentNotes) { setRenderError(t('synth.selectSingerFirst')); return; }
+    if (!hasNotes && !hasInstrumentNotes) { setRenderError(t('synth.noNotes')); return; }
 
     const ac = new AbortController();
     abortRef.current = ac;
     const yaml = serializeUstx(project);
 
-    // Step 1: DiffSinger render
+    // Step 1: DiffSinger render (skip if no vocal notes)
     setRenderStatus('rendering');
-    let renderedBlob: Blob;
+    let renderedBlob: Blob | null = null;
+    if (hasNotes && singer) {
     try {
       const form = new FormData();
       form.append('content', yaml);
@@ -64,8 +70,10 @@ export default function RenderButton() {
       return;
     }
 
-    // Step 2: RVC convert (if model selected)
-    if (rvcModel) {
+    } // end if (hasNotes && singer)
+
+    // Step 2: RVC convert (if model selected and vocal was rendered)
+    if (rvcModel && renderedBlob) {
       setRenderStatus('converting');
       try {
         const form = new FormData();
@@ -82,6 +90,27 @@ export default function RenderButton() {
         setRenderError(`${t('synth.convertFailed')}: ${err.message || 'Unknown error'}`);
         setRenderStatus('error');
         return;
+      }
+    }
+
+    // Step 3: Render instrument tracks (VST)
+    for (const ip of project.instrument_parts) {
+      const track = project.tracks[ip.track_no];
+      if (!track?.plugin_name || ip.notes.length === 0) continue;
+      try {
+        const bpm = project.tempos[0]?.bpm ?? 120;
+        const notes = ip.notes.map(n => ({
+          tone: n.tone,
+          velocity: n.velocity,
+          start: engine.ticksToSeconds(ip.position + n.position, project.tempos),
+          duration: engine.ticksToSeconds(n.duration, [{ position: 0, bpm }]),
+        }));
+        const blob = await renderVST({ plugin_name: track.plugin_name, notes, bpm });
+        const prevUrl = useSynthStore.getState().trackAudioUrls[ip.track_no];
+        if (prevUrl) URL.revokeObjectURL(prevUrl);
+        setTrackAudioUrl(ip.track_no, URL.createObjectURL(blob));
+      } catch (err: any) {
+        console.error(`VST render failed for track ${ip.track_no}:`, err);
       }
     }
 
