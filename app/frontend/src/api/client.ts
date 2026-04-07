@@ -303,6 +303,31 @@ export const renderVST = (data: {
     return r.blob()
   })
 
+// Effects
+export const getEffectTypes = () =>
+  fetchJSON<Record<string, any>>('/api/effects/types')
+
+export const applyEffects = (audioPath: string, effects: any[]) =>
+  fetch(`${API_BASE}/api/effects/apply`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ audio_path: audioPath, effects }),
+  }).then(r => {
+    if (!r.ok) throw new Error(`Effects failed: ${r.status}`)
+    return r.blob()
+  })
+
+export const applyEffectsUpload = (file: Blob, effects: any[]) => {
+  const form = new FormData()
+  form.append('file', file, 'audio.wav')
+  form.append('effects_json', JSON.stringify(effects))
+  return fetch(`${API_BASE}/api/effects/apply-upload`, { method: 'POST', body: form })
+    .then(r => {
+      if (!r.ok) throw new Error(`Effects failed: ${r.status}`)
+      return r.blob()
+    })
+}
+
 export const cleanupTrainingData = (expName: string) =>
   fetchJSON<any>(`/api/cleanup/training/${encodeURIComponent(expName)}`, { method: 'POST' })
 

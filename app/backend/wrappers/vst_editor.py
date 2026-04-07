@@ -34,7 +34,7 @@ def main():
             if project_root not in sys.path:
                 sys.path.insert(0, project_root)
             from app.backend.wrappers.vst2_host import run_editor_with_audio
-            run_editor_with_audio(dll_path, state_path)
+            run_editor_with_audio(dll_path, state_path, int(owner_hwnd) if owner_hwnd != "0" else 0)
         except Exception as e:
             print(json.dumps({"error": f"VST2 editor failed: {e}"}), flush=True)
             sys.exit(1)

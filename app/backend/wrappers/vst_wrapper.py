@@ -313,6 +313,14 @@ def open_editor(name: str) -> dict:
     state_path = str(plugin_dir / "state.bin")
     ext = Path(dll_path).suffix.lower()
 
+    # Get foreground window HWND for owner relationship
+    owner_hwnd = "0"
+    try:
+        import ctypes
+        owner_hwnd = str(ctypes.windll.user32.GetForegroundWindow())
+    except Exception:
+        pass
+
     if ext == ".dll":
         # VST2: Python ctypes host via vst_editor.py
         editor_script = str(PROJECT_ROOT / "app" / "backend" / "wrappers" / "vst_editor.py")
@@ -320,13 +328,13 @@ def open_editor(name: str) -> dict:
         pythonw = python_exe.parent / "pythonw.exe"
         if not pythonw.exists():
             pythonw = python_exe
-        cmd = [str(pythonw), editor_script, dll_path, state_path]
+        cmd = [str(pythonw), editor_script, dll_path, state_path, owner_hwnd]
     else:
         # VST3: JUCE host exe
         juce_exe = PROJECT_ROOT / "VST" / "host" / "UtaiVSTHost.exe"
         if not juce_exe.exists():
             raise FileNotFoundError("JUCE VST host not found. Build VST/host/ first.")
-        cmd = [str(juce_exe), dll_path, state_path]
+        cmd = [str(juce_exe), dll_path, state_path, owner_hwnd]
 
     proc = subprocess.Popen(
         cmd,

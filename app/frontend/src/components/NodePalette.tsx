@@ -163,6 +163,15 @@ export function NodePalette() {
         >
           {t('node.audioMerge')}
         </button>
+        <button
+          className="utai-palette__item"
+          onClick={() => handleAdd({ type: 'effects', label: '', category: 'processing', color: 'var(--accent-cyan)' })}
+          draggable
+          onDragStart={(e) => handleDragStart(e, { type: 'effects', label: '', category: 'processing', color: 'var(--accent-cyan)' })}
+          style={{ color: 'var(--accent-cyan)', borderColor: 'var(--accent-cyan)' }}
+        >
+          {t('node.effects')}
+        </button>
       </div>
 
       {/* Output */}

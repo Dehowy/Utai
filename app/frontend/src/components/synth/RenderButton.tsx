@@ -3,8 +3,9 @@ import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import { serializeUstx } from '../../lib/synth/ustx';
 import { RESOLUTION } from '../../types/ustx';
-import { renderVST } from '../../api/client';
+import { renderVST, applyEffectsUpload } from '../../api/client';
 import * as engine from '../../lib/synth/audioEngine';
+import type { RenderEffectType } from '../../lib/synth/effects';
 
 export default function RenderButton() {
   const { t } = useTranslation();
@@ -23,6 +24,7 @@ export default function RenderButton() {
   const abortRef = useRef<AbortController | null>(null);
 
   const setTrackAudioUrl = useSynthStore(s => s.setTrackAudioUrl);
+  const trackEffects = useSynthStore(s => s.trackEffects);
   const hasNotes = project.voice_parts.some(p => p.notes.length > 0);
   const hasInstrumentNotes = project.instrument_parts.some(p => p.notes.length > 0);
 
@@ -112,6 +114,41 @@ export default function RenderButton() {
       } catch (err: any) {
         console.error(`VST render failed for track ${ip.track_no}:`, err);
       }
+    }
+
+    // Step 4: Apply track effects (dawdreamer/WORLD)
+    const allTrackUrls = useSynthStore.getState().trackAudioUrls;
+    for (const [trackIdxStr, audioUrl] of Object.entries(allTrackUrls)) {
+      const tIdx = parseInt(trackIdxStr, 10);
+      const effects = trackEffects[tIdx];
+      if (!effects || effects.length === 0 || !audioUrl) continue;
+      const renderFx = effects.filter(e => e.enabled && e.type in {
+        world_pitch:1, warp_pitch:1, compressor:1, reverb:1, filter:1, delay:1, panner:1,
+      });
+      if (renderFx.length === 0) continue;
+      try {
+        const audioBlob = await fetch(audioUrl).then(r => r.blob());
+        const processed = await applyEffectsUpload(audioBlob, renderFx);
+        const prevUrl = allTrackUrls[tIdx];
+        if (prevUrl) URL.revokeObjectURL(prevUrl);
+        setTrackAudioUrl(tIdx, URL.createObjectURL(processed));
+      } catch (err: any) {
+        console.error(`Track ${tIdx} effects failed:`, err);
+      }
+    }
+
+    // Also apply effects to rendered vocal (track 0 main output)
+    const vocalTrackIdx = project.voice_parts[0]?.track_no ?? 0;
+    const vocalFx = trackEffects[vocalTrackIdx]?.filter(e =>
+      e.enabled && e.type in { world_pitch:1, warp_pitch:1, compressor:1, reverb:1, filter:1, delay:1, panner:1 }
+    );
+    if (vocalFx?.length && renderedBlob) {
+      try {
+        const processed = await applyEffectsUpload(new Blob([renderedBlob], { type: 'audio/wav' }), vocalFx);
+        const prevUrl = useSynthStore.getState().renderedUrl;
+        if (prevUrl) URL.revokeObjectURL(prevUrl);
+        setRenderedUrl(URL.createObjectURL(processed));
+      } catch {}
     }
 
     abortRef.current = null;

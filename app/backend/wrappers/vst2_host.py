@@ -177,7 +177,7 @@ class VST2Host:
         self._dispatch(effClose)
 
 
-def run_editor_with_audio(dll_path: str, state_path: str):
+def run_editor_with_audio(dll_path: str, state_path: str, owner_hwnd: int = 0):
     """Open VST2 editor with real-time audio. Blocks until window is closed."""
     import sounddevice as sd
 
@@ -248,10 +248,11 @@ def run_editor_with_audio(dll_path: str, state_path: str):
     ew_total = rect.right - rect.left
     eh_total = rect.bottom - rect.top
 
-    # Get the foreground window as owner — editor stays on top of it
-    # (the user just clicked "Open Editor" so their app window is foreground)
-    user32.GetForegroundWindow.restype = wt.HWND
-    owner_hwnd = user32.GetForegroundWindow()
+    # Use provided owner HWND, or fall back to foreground window
+    if not owner_hwnd:
+        user32.GetForegroundWindow.restype = wt.HWND
+        owner_hwnd = user32.GetForegroundWindow() or 0
+    owner_hwnd_val = wt.HWND(owner_hwnd) if owner_hwnd else None
 
     user32.CreateWindowExW.restype = wt.HWND
     user32.CreateWindowExW.argtypes = [
@@ -262,7 +263,7 @@ def run_editor_with_audio(dll_path: str, state_path: str):
     hwnd = user32.CreateWindowExW(
         0, "UtaiVST", "Utai — VST Editor", style,
         100, 100, ew_total, eh_total,
-        owner_hwnd, None, wc.hInstance, None,
+        owner_hwnd_val, None, wc.hInstance, None,
     )
 
     host._dispatch(effEditOpen, ptr=ctypes.c_void_p(hwnd))

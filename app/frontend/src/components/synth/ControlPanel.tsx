@@ -6,6 +6,7 @@ import RVCModelSelector from './RVCModelSelector';
 import RVCControls from './RVCControls';
 import RenderButton from './RenderButton';
 import VSTPluginSelector from './VSTPluginSelector';
+import TrackEffectsPanel from './TrackEffectsPanel';
 import AudioPreview from './AudioPreview';
 import LogViewer from './LogViewer';
 import G2pTool from './G2pTool';
@@ -46,6 +47,8 @@ export default function ControlPanel() {
           <VSTPluginSelector />
         </>
       )}
+
+      <TrackEffectsPanel />
 
       <hr style={{ border: 'none', borderTop: '1px dashed var(--border-dim)' }} />
 

@@ -26,6 +26,7 @@ from app.backend.api.routes_train import router as train_router
 from app.backend.api.routes_workflow import router as workflow_router
 from app.backend.api.routes_synth import router as synth_router
 from app.backend.api.routes_vst import router as vst_router
+from app.backend.api.routes_effects import router as effects_router
 from app.backend.config import TEMP_DIR
 from app.backend.core.node_registry import register_all_nodes
 
@@ -64,6 +65,7 @@ app.include_router(train_router)
 app.include_router(workflow_router)
 app.include_router(synth_router)
 app.include_router(vst_router)
+app.include_router(effects_router)
 
 @app.on_event("startup")
 async def startup_cleanup():

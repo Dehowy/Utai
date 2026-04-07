@@ -28,6 +28,7 @@ import { VideoInputNode } from '../nodes/VideoInputNode'
 import { VideoOutputNode } from '../nodes/VideoOutputNode'
 import { MediaOutputNode } from '../nodes/MediaOutputNode'
 import { AudioMergeNode } from '../nodes/AudioMergeNode'
+import { EffectsNode } from '../nodes/EffectsNode'
 import { ModelManager } from '../components/ModelManager'
 import { WorkflowLogPanel } from '../components/WorkflowLogPanel'
 import { startExecution, startPartialExecution, connectExecution, removeBuffers } from '../api/client'
@@ -45,6 +46,7 @@ const nodeTypes: NodeTypes = {
   video_output: VideoOutputNode,   // backward compat for old projects
   media_output: MediaOutputNode,
   audio_merge: AudioMergeNode,
+  effects: EffectsNode,
 }
 
 interface ContextMenuState {

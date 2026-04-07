@@ -1,31 +1,21 @@
-/** Per-track effect chain editor. */
+/** Per-track effect chain editor (legacy — used in arrangement view).
+ *  Delegates to the shared RENDER_EFFECTS definitions. */
 
 import { useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
-import { EFFECT_DEFAULTS, EFFECT_LABELS, type EffectType, type TrackEffect } from '../../lib/synth/effects';
+import { RENDER_EFFECTS, type RenderEffectType, createDefaultEffect } from '../../lib/synth/effects';
 
 interface Props {
   trackIndex: number;
 }
 
-const EFFECT_TYPES: EffectType[] = ['gain', 'eq3band', 'reverb', 'compressor'];
+const QUICK_EFFECTS: RenderEffectType[] = ['reverb', 'compressor', 'filter', 'delay'];
 
 export default function TrackEffects({ trackIndex }: Props) {
-  const { t } = useTranslation();
   const effects = useSynthStore(s => s.trackEffects[trackIndex] || []);
   const addEffect = useSynthStore(s => s.addEffect);
   const removeEffect = useSynthStore(s => s.removeEffect);
-  const updateEffectParams = useSynthStore(s => s.updateEffectParams);
   const [open, setOpen] = useState(false);
-
-  const handleAdd = (type: EffectType) => {
-    addEffect(trackIndex, {
-      type,
-      params: { ...EFFECT_DEFAULTS[type] },
-      enabled: true,
-    });
-  };
 
   if (!open) {
     return (
@@ -41,67 +31,27 @@ export default function TrackEffects({ trackIndex }: Props) {
 
   return (
     <div className="utai-synth-effects">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-        <span style={{ fontFamily: 'var(--font-pixel)', fontSize: 11, color: 'var(--accent-purple)' }}>
-          FX Chain — Track {trackIndex + 1}
-        </span>
-        <button className="utai-btn" onClick={() => setOpen(false)} style={{ fontSize: 10, padding: '1px 6px' }}>
-          ×
-        </button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+        <span style={{ fontSize: 10, color: 'var(--accent-purple)' }}>FX — Track {trackIndex + 1}</span>
+        <button className="utai-btn" onClick={() => setOpen(false)} style={{ fontSize: 9, padding: '0 4px' }}>x</button>
       </div>
-
       {effects.map((fx, i) => (
-        <div key={i} className="utai-synth-effects__slot">
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 10, color: fx.enabled ? '#e0e0ff' : '#666' }}>
-              {EFFECT_LABELS[fx.type]}
-            </span>
-            <div style={{ display: 'flex', gap: 4 }}>
-              <button
-                className="utai-btn"
-                onClick={() => updateEffectParams(trackIndex, i, { _enabled: fx.enabled ? 0 : 1 } as any)}
-                style={{ fontSize: 9, padding: '0 4px', color: fx.enabled ? 'var(--accent-cyan)' : '#666' }}
-              >
-                {fx.enabled ? 'ON' : 'OFF'}
-              </button>
-              <button
-                className="utai-btn"
-                onClick={() => removeEffect(trackIndex, i)}
-                style={{ fontSize: 9, padding: '0 4px', color: 'var(--accent-red)' }}
-              >
-                ×
-              </button>
-            </div>
-          </div>
-          {fx.enabled && (
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4, marginTop: 4 }}>
-              {Object.entries(fx.params).map(([key, val]) => (
-                <label key={key} style={{ fontSize: 9, color: 'var(--text-muted)' }}>
-                  {key}
-                  <input
-                    type="range"
-                    min={key === 'mix' ? 0 : key === 'gain' || key === 'low' || key === 'mid' || key === 'high' ? -24 : key === 'threshold' ? -60 : 0}
-                    max={key === 'mix' ? 1 : key === 'gain' || key === 'low' || key === 'mid' || key === 'high' ? 24 : key === 'ratio' ? 20 : key === 'decay' ? 5 : 1}
-                    step={key === 'mix' || key === 'attack' || key === 'release' ? 0.01 : 0.5}
-                    value={val}
-                    onChange={e => updateEffectParams(trackIndex, i, { [key]: Number(e.target.value) })}
-                    style={{ width: '100%' }}
-                  />
-                </label>
-              ))}
-            </div>
-          )}
+        <div key={i} style={{ fontSize: 9, display: 'flex', justifyContent: 'space-between', padding: '1px 0' }}>
+          <span style={{ color: fx.enabled ? 'var(--accent-cyan)' : 'var(--text-dim)' }}>
+            {RENDER_EFFECTS[fx.type as RenderEffectType]?.label || fx.type}
+          </span>
+          <button style={{ background: 'none', border: 'none', color: 'var(--accent-pink)', cursor: 'pointer', fontSize: 9 }}
+            onClick={() => removeEffect(trackIndex, i)}>x</button>
         </div>
       ))}
-
       <select
-        onChange={e => { if (e.target.value) { handleAdd(e.target.value as EffectType); e.target.value = ''; } }}
+        onChange={e => { if (e.target.value) { addEffect(trackIndex, createDefaultEffect(e.target.value as RenderEffectType)); e.target.value = ''; } }}
         defaultValue=""
-        style={{ width: '100%', marginTop: 4, background: 'var(--bg-deep)', color: 'var(--text-muted)', border: '1px solid var(--border-dim)', fontSize: 10, padding: '2px 4px' }}
+        style={{ width: '100%', marginTop: 2, background: 'var(--bg-deep)', color: 'var(--text-muted)', border: '1px solid var(--border-dim)', fontSize: 9, padding: '1px 2px' }}
       >
-        <option value="">+ Add Effect</option>
-        {EFFECT_TYPES.map(t => (
-          <option key={t} value={t}>{EFFECT_LABELS[t]}</option>
+        <option value="">+ Add</option>
+        {QUICK_EFFECTS.map(t => (
+          <option key={t} value={t}>{RENDER_EFFECTS[t].label}</option>
         ))}
       </select>
     </div>
