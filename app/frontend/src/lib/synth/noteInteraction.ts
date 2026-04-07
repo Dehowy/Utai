@@ -42,7 +42,7 @@ export function hitTest(
       const absPos = part.position + note.position;
       const absEnd = absPos + note.duration;
 
-      if (tick >= absPos && tick <= absEnd && midiRounded === note.tone) {
+      if (tick >= absPos && tick < absEnd && midiRounded === note.tone) {
         const noteId = `${pi}-${ni}`;
 
         const rightEdgeTick = absEnd;

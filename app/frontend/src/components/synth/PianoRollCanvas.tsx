@@ -1,6 +1,6 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useSynthStore } from '../../store/synthStore';
-import { defaultPitch, defaultVibrato } from '../../types/ustx';
+import { defaultPitch, defaultVibrato, RESOLUTION } from '../../types/ustx';
 import { renderPianoRoll, screenToTick, screenToMidi, snapTick, snapTickFloor, tickToScreen, midiToScreen, HEADER_H, KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
 import { hitTest } from '../../lib/synth/noteInteraction';
 import { playNote } from '../../lib/synth/pitchPreview';
@@ -266,7 +266,7 @@ export default function PianoRollCanvas() {
 
         // Empty area → create new note
         const rawTick = clickTick - partPos;
-        const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+        const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
         playNote(clickMidi);
         s.addInstrumentNote(instIdx, {
           position: Math.max(0, snappedTick),
@@ -344,7 +344,7 @@ export default function PianoRollCanvas() {
       const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
       const rawTick = hit.tick - partPos;
       const part = s.project.voice_parts[s.activePartIndex];
-      let snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+      let snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
       if (part && part.notes.length > 0) {
         const tolerance = s.viewState.snapTicks * 0.6;
         for (const n of part.notes) {
@@ -431,7 +431,7 @@ export default function PianoRollCanvas() {
         const instPart = s.project.instrument_parts[instIdx];
         const partPos = instPart?.position ?? 0;
         const rawTick = screenToTick(x, s.viewState) - partPos;
-        const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+        const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
         const gMidi = Math.max(0, Math.min(127, Math.ceil(screenToMidi(y, s.viewState))));
         setGhostNote({ tick: Math.max(0, snappedTick), midi: gMidi });
       } else {
@@ -439,7 +439,7 @@ export default function PianoRollCanvas() {
         if (hit.type === 'empty') {
           const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
           const rawTick = hit.tick - partPos;
-          let snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+          let snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
           const part = s.project.voice_parts[s.activePartIndex];
           if (part && part.notes.length > 0) {
             const tolerance = s.viewState.snapTicks * 0.6;
@@ -555,7 +555,7 @@ export default function PianoRollCanvas() {
       s.setTool('draw');
       const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
       const rawTick = hit.tick - partPos;
-      const snappedTick = snapTickFloor(rawTick, s.viewState.snapTicks);
+      const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
       const midi = Math.max(0, Math.min(127, hit.midi));
       playNote(midi);
       const notePos = Math.max(0, snappedTick);
