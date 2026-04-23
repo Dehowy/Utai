@@ -9,6 +9,7 @@ export default function RVCModelSelector() {
   const { t } = useTranslation();
   const rvcModel = useSynthStore(s => s.rvcModel);
   const setRvcModel = useSynthStore(s => s.setRvcModel);
+  const listVersion = useSynthStore(s => s.rvcModelListVersion);
   const [models, setModels] = useState<Model[]>([]);
 
   useEffect(() => {
@@ -18,7 +19,7 @@ export default function RVCModelSelector() {
       }));
       setModels(rvcModels);
     }).catch(() => setModels([]));
-  }, []);
+  }, [listVersion]);
 
   return (
     <div className="utai-synth-section">

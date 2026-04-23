@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next';
 import { useSynthStore, type Tool } from '../../store/synthStore';
 import { RESOLUTION } from '../../types/ustx';
+import { ticksToDurationLabel } from '../../lib/synth/pianoRollEngine';
 
 export const SNAP_OPTIONS = [
   { label: '1/1', ticks: RESOLUTION * 4, group: 'std' },
@@ -16,6 +17,9 @@ export const SNAP_OPTIONS = [
   { label: '1/32T', ticks: Math.round(RESOLUTION / 12), group: 'tri' },
 ];
 
+// All atomic durations sorted ascending — used by Alt+scroll cycling
+export const SNAP_ATOMS_ASC = [...SNAP_OPTIONS].sort((a, b) => a.ticks - b.ticks);
+
 export default function PianoRollToolbar() {
   const { t } = useTranslation();
   const activeTool = useSynthStore(s => s.activeTool);
@@ -23,6 +27,9 @@ export default function PianoRollToolbar() {
   const viewMode = useSynthStore(s => s.viewMode);
   const undoStack = useSynthStore(s => s.undoStack);
   const redoStack = useSynthStore(s => s.redoStack);
+  const pitchSnap = useSynthStore(s => s.pitchSnap);
+  const togglePitchSnap = useSynthStore(s => s.togglePitchSnap);
+  const isInstMode = useSynthStore(s => s.activeInstrumentPartIndex) >= 0;
   const setTool = useSynthStore(s => s.setTool);
   const setViewState = useSynthStore(s => s.setViewState);
   const setViewMode = useSynthStore(s => s.setViewMode);
@@ -45,6 +52,7 @@ export default function PianoRollToolbar() {
     select: '#5ce0d8',  // cyan
     draw: '#9b6dff',    // purple
     erase: '#ff6b9d',   // pink
+    pitch: '#5deba5',   // green
   };
   const toolBtnStyle = (id: Tool, active: boolean) => ({
     padding: '2px 8px',
@@ -82,6 +90,31 @@ export default function PianoRollToolbar() {
           )}
         </button>
       ))}
+      {!isArr && !isInstMode && (
+        <button
+          className="utai-btn"
+          onClick={() => setTool('pitch')}
+          title="Pitch Curve (4)"
+          style={toolBtnStyle('pitch', activeTool === 'pitch')}
+        >
+          ♪
+        </button>
+      )}
+      {!isArr && !isInstMode && activeTool === 'pitch' && (
+        <button
+          className="utai-btn"
+          onClick={togglePitchSnap}
+          title="Snap to base pitch"
+          style={{
+            fontSize: 10, padding: '2px 6px',
+            borderColor: pitchSnap ? '#5deba5' : 'var(--border-dim)',
+            color: pitchSnap ? '#5deba5' : 'var(--text-dim)',
+            background: pitchSnap ? 'rgba(93,235,165,0.12)' : 'transparent',
+          }}
+        >
+          Snap
+        </button>
+      )}
 
       <span style={{ color: 'var(--border-dim)', margin: '0 2px' }}>|</span>
 
@@ -107,6 +140,12 @@ export default function PianoRollToolbar() {
               </optgroup>
             </select>
           </label>
+          {/* Show resolved label when Alt+scroll goes beyond dropdown presets */}
+          {!SNAP_OPTIONS.some(o => o.ticks === viewState.snapTicks) && (
+            <span style={{ color: 'var(--accent-purple)', fontFamily: 'var(--font-mono)', fontSize: 10, marginLeft: 2 }}>
+              {ticksToDurationLabel(viewState.snapTicks)}
+            </span>
+          )}
           <span style={{ color: 'var(--border-dim)', margin: '0 2px' }}>|</span>
         </>
       )}

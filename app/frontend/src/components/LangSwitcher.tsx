@@ -15,7 +15,7 @@ export function LangSwitcher() {
         <button
           key={lang.code}
           className={`utai-lang-switcher__item ${i18n.language === lang.code ? 'utai-lang-switcher__item--active' : ''}`}
-          onClick={() => i18n.changeLanguage(lang.code)}
+          onClick={() => { i18n.changeLanguage(lang.code); localStorage.setItem('utai-lang', lang.code); }}
         >
           {lang.label}
         </button>

@@ -60,6 +60,11 @@ export function CloseDialog({ open, fromTray, onDone }: CloseDialogProps) {
   const doQuit = useCallback(async () => {
     setQuitting(true)
     try {
+      const s = useSynthStore.getState()
+      await fetch('/api/synth/project/autosave', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: { language: s.language, rvcModel: s.rvcModel, muteStrategy: s.muteStrategy } }),
+      }).catch(() => {})
       await cleanupTemp().catch(() => {})
       await cleanupBuffers().catch(() => {})
     } catch {}

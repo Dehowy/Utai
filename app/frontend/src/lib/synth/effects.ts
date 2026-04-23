@@ -11,6 +11,7 @@ export interface TrackEffect {
   type: EffectType | RenderEffectType;
   params: Record<string, number>;
   enabled: boolean;
+  scope?: 'track' | number | string;  // 'track' = whole track, number = voice part index, 'w0'/'w1' = wave part
 }
 
 // All render effects with their parameter definitions
@@ -20,11 +21,12 @@ export const RENDER_EFFECTS: Record<RenderEffectType, {
   params: Record<string, { default: number; min: number; max: number; step: number; label: string }>;
 }> = {
   world_pitch: {
-    label: 'WORLD Pitch',
+    label: 'WORLD Pitch/Speed',
     category: 'pitch',
     params: {
       semitones: { default: 0, min: -24, max: 24, step: 1, label: 'Semitones' },
       formant_shift: { default: 1.0, min: 0.5, max: 2.0, step: 0.05, label: 'Formant' },
+      speed: { default: 1.0, min: 0.25, max: 4.0, step: 0.05, label: 'Speed' },
     },
   },
   warp_pitch: {
@@ -134,11 +136,11 @@ export function createEffectNodes(
 }
 
 /** Create default params for a render effect type. */
-export function createDefaultEffect(type: RenderEffectType): TrackEffect {
+export function createDefaultEffect(type: RenderEffectType, scope: 'track' | number | string = 'track'): TrackEffect {
   const def = RENDER_EFFECTS[type];
   const params: Record<string, number> = {};
   for (const [k, v] of Object.entries(def.params)) {
     params[k] = v.default;
   }
-  return { type, params, enabled: true };
+  return { type, params, enabled: true, scope };
 }

@@ -25,11 +25,12 @@ logger = logging.getLogger("utai.effects")
 # Effect type definitions with default parameters
 EFFECT_DEFS: dict[str, dict[str, Any]] = {
     "world_pitch": {
-        "label": "WORLD Pitch Shift",
+        "label": "WORLD Pitch/Speed",
         "category": "pitch",
         "params": {
             "semitones": {"default": 0, "min": -24, "max": 24, "step": 1, "label": "Semitones"},
             "formant_shift": {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05, "label": "Formant"},
+            "speed": {"default": 1.0, "min": 0.25, "max": 4.0, "step": 0.05, "label": "Speed"},
         },
     },
     "warp_pitch": {
@@ -167,29 +168,26 @@ def apply_effects_to_buffer(
 # ── WORLD vocoder pitch shift ──
 
 def _apply_world_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
-    """WORLD vocoder pitch shift — vocal-specific, no chipmunk effect."""
+    """WORLD vocoder pitch/speed shift — vocal-specific, no chipmunk effect."""
     import pyworld as pw
-    from scipy.interpolate import interp1d
 
     semitones = float(params.get("semitones", 0))
     formant_shift = float(params.get("formant_shift", 1.0))
+    speed = float(params.get("speed", 1.0))
 
-    if semitones == 0 and formant_shift == 1.0:
+    if semitones == 0 and formant_shift == 1.0 and speed == 1.0:
         return audio
 
-    # WORLD works on mono float64
     mono = audio[0].astype(np.float64) if audio.shape[0] >= 1 else audio.astype(np.float64)
 
     f0, sp, ap = pw.wav2world(mono, sr)
 
-    # Pitch shift
     if semitones != 0:
         f0_new = f0.copy()
         f0_new[f0_new > 0] *= 2 ** (semitones / 12)
     else:
         f0_new = f0
 
-    # Formant shift (spectral envelope stretch)
     if formant_shift != 1.0:
         sp_new = np.zeros_like(sp)
         freq_axis = np.arange(sp.shape[1], dtype=np.float64)
@@ -198,10 +196,19 @@ def _apply_world_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
     else:
         sp_new = sp
 
+    # Time-stretch: resample frames to change duration without affecting pitch
+    if speed != 1.0:
+        n_old = len(f0_new)
+        n_new = max(1, int(round(n_old / speed)))
+        old_t = np.linspace(0, 1, n_old)
+        new_t = np.linspace(0, 1, n_new)
+        f0_new = np.interp(new_t, old_t, f0_new)
+        sp_new = np.array([np.interp(new_t, old_t, sp_new[:, j]) for j in range(sp_new.shape[1])]).T
+        ap = np.array([np.interp(new_t, old_t, ap[:, j]) for j in range(ap.shape[1])]).T
+
     y = pw.synthesize(f0_new, sp_new, np.ascontiguousarray(ap), sr)
     y = y.astype(np.float32)
 
-    # Back to stereo
     return np.stack([y, y])
 
 

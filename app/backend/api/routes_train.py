@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Form
 from pydantic import BaseModel
 
 from app.backend.config import TEMP_DIR, RVC_ROOT
@@ -34,17 +34,14 @@ from fastapi.responses import FileResponse
 @router.get("/dataset-audio")
 async def stream_dataset_audio(path: str):
     """Stream an audio file from the dataset directory for preview playback."""
-    file_path = Path(path)
-    # Security: only allow files within TEMP_DIR/datasets
     datasets_root = Path(str(TEMP_DIR)) / "datasets"
-    try:
-        file_path.resolve().relative_to(datasets_root.resolve())
-    except ValueError:
-        from fastapi import HTTPException
+    if Path(path).is_absolute():
+        raise HTTPException(403, "Access denied")
+    file_path = datasets_root / path
+    if not file_path.resolve().is_relative_to(datasets_root.resolve()):
         raise HTTPException(403, "Access denied")
 
     if not file_path.exists():
-        from fastapi import HTTPException
         raise HTTPException(404, "File not found")
 
     return FileResponse(str(file_path), media_type="audio/wav")
@@ -53,7 +50,7 @@ async def stream_dataset_audio(path: str):
 @router.get("/training-metrics/{exp_name}")
 async def get_training_metrics(exp_name: str):
     """Parse training logs to extract loss metrics for visualization."""
-    from fastapi import HTTPException
+
     import re
 
     exp_dir = Path(RVC_ROOT) / "logs" / exp_name
@@ -121,7 +118,7 @@ class BatchSeparateRequest(BaseModel):
 async def start_batch_separation(req: BatchSeparateRequest):
     """Start batch MSST/VR separation on disk files. Returns task_id for WS progress."""
     if not req.files:
-        from fastapi import HTTPException
+    
         raise HTTPException(400, "No files provided")
 
     task_id = uuid.uuid4().hex[:16]
@@ -139,7 +136,10 @@ async def _run_batch_separation(task_id: str, req: BatchSeparateRequest):
     import soundfile as sf
     import numpy as np
 
-    task = _active_tasks[task_id]
+    task = _active_tasks.get(task_id)
+    if not task:
+        logger.error(f"[batch-sep] Task {task_id} not found")
+        return
     log_cb = await _log_callback_factory(task_id)
 
     logger.info(f"[batch-sep] Task {task_id} started for model {req.model_name}")
@@ -317,7 +317,10 @@ async def upload_dataset(
 
     saved = []
     for f in files:
-        dest = dataset_dir / f.filename
+        safe_name = Path(f.filename).name
+        if not safe_name:
+            continue
+        dest = dataset_dir / safe_name
         with open(str(dest), "wb") as fp:
             content = await f.read()
             fp.write(content)
@@ -356,7 +359,7 @@ async def start_full_training(req: TrainStartRequest):
     # (when files are given, _run_training creates its own flat dir from them)
     has_explicit_files = bool(getattr(req, 'files', None))
     if req.input_dir and not has_explicit_files and not os.path.isdir(req.input_dir):
-        from fastapi import HTTPException
+    
         raise HTTPException(400, f"input_dir does not exist: {req.input_dir}")
 
     task_id = uuid.uuid4().hex[:16]
@@ -435,7 +438,7 @@ async def training_ws(ws: WebSocket, task_id: str):
         await ws.close()
         return
 
-    queue: asyncio.Queue = asyncio.Queue()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=1000)
     if task_id not in _task_queues:
         _task_queues[task_id] = []
     _task_queues[task_id].append(queue)
@@ -498,8 +501,6 @@ async def _broadcast(task_id: str, message: dict):
         task.logs.append(message["message"])
     # Also store last status + complete message for replay
     if task and message.get("type") in ("status", "complete"):
-        if not hasattr(task, '_pending_msgs'):
-            task._pending_msgs = []
         task._pending_msgs.append(message)
     queues = _task_queues.get(task_id, [])
     for q in queues:
@@ -515,7 +516,10 @@ async def _log_callback_factory(task_id: str):
 
 async def _run_training(task_id: str, params: dict):
     """Run the full training pipeline in background."""
-    task = _active_tasks[task_id]
+    task = _active_tasks.get(task_id)
+    if not task:
+        logger.error(f"[train] Task {task_id} not found")
+        return
     log_cb = await _log_callback_factory(task_id)
 
     try:
@@ -597,7 +601,10 @@ async def _run_training(task_id: str, params: dict):
 
 async def _run_single_step(task_id: str, params: dict):
     """Run a single training step."""
-    task = _active_tasks[task_id]
+    task = _active_tasks.get(task_id)
+    if not task:
+        logger.error(f"[train-step] Task {task_id} not found")
+        return
     log_cb = await _log_callback_factory(task_id)
     step = params["step"]
     exp_name = params["exp_name"]

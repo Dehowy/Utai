@@ -123,6 +123,9 @@ Desktop.ini
 .DS_Store
 ehthumbs.db
 
+# Experiments (isolated from main codebase)
+experiments/
+
 # Environment / Secrets
 .env
 .env.*

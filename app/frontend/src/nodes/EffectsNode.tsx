@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { NodeShell } from './NodeShell'
 import { RENDER_EFFECTS, type RenderEffectType, createDefaultEffect, type TrackEffect } from '../lib/synth/effects'
 import { useWorkflowStore } from '../store/workflowStore'
+import { useExecutionStore } from '../store/executionStore'
+import { AudioPlayer } from '../components/AudioPlayer'
 
 interface EffectsNodeProps {
   id: string
@@ -15,6 +17,8 @@ interface EffectsNodeProps {
 export function EffectsNode({ id, data }: EffectsNodeProps) {
   const { t } = useTranslation()
   const updateNodeData = useWorkflowStore(s => s.updateNodeData)
+  const nodeState = useExecutionStore(s => s.nodeStates[id])
+  const outputBufferId = nodeState?.outputs?.audio
   const effects: TrackEffect[] = data.params?.effects || []
   const [addOpen, setAddOpen] = useState(false)
 
@@ -122,6 +126,8 @@ export function EffectsNode({ id, data }: EffectsNodeProps) {
           )}
         </div>
       </div>
+
+      {outputBufferId && <AudioPlayer bufferId={outputBufferId} />}
     </NodeShell>
   )
 }

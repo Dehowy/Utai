@@ -12,6 +12,7 @@ declare global {
       onOpenUtaiFile: (callback: (filePath: string) => void) => (() => void) | void
       onCloseRequested: (callback: (data: { fromTray: boolean }) => void) => (() => void) | void
       sendCloseAction: (action: 'minimize' | 'quit' | 'cancel') => void
+      onForceAutosave: (callback: () => void) => (() => void) | void
     }
   }
 }
@@ -73,38 +74,17 @@ export const restoreRVCModel = (archivedName: string) =>
 export const deleteArchivedRVCModel = (archivedName: string) =>
   fetchJSON<any>(`/api/models/rvc/archived/${encodeURIComponent(archivedName)}`, { method: 'DELETE' })
 
-// DiffSinger models
-export const getDiffSingerModels = () =>
-  fetchJSON<any[]>('/api/models/diffsinger')
-export const getDiffSingerCatalog = () =>
-  fetchJSON<any>('/api/models/diffsinger/catalog')
-export const downloadDiffSingerModel = (modelId: string) =>
-  fetchJSON<any>('/api/models/diffsinger/download', {
-    method: 'POST',
-    body: JSON.stringify({ model_id: modelId }),
-  })
-export const getDiffSingerDownloadStatus = (modelId: string) =>
-  fetchJSON<any>(`/api/models/diffsinger/download-status/${encodeURIComponent(modelId)}`)
-export async function importDiffSingerModel(zipFile: File) {
-  const formData = new FormData()
-  formData.append('file', zipFile)
-  const res = await fetch(`${API_BASE}/api/models/diffsinger/import`, { method: 'POST', body: formData })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Import failed: ${res.status}: ${text}`)
-  }
-  return res.json()
-}
-export const archiveDiffSinger = (singerId: string) =>
-  fetchJSON<any>(`/api/models/diffsinger/archive/${encodeURIComponent(singerId)}`, { method: 'POST' })
-export const getArchivedDiffSinger = () =>
-  fetchJSON<any[]>('/api/models/diffsinger/archived')
-export const restoreDiffSinger = (archivedName: string) =>
-  fetchJSON<any>(`/api/models/diffsinger/restore/${encodeURIComponent(archivedName)}`, { method: 'POST' })
-export const deleteDiffSinger = (singerId: string) =>
-  fetchJSON<any>(`/api/models/diffsinger/${encodeURIComponent(singerId)}`, { method: 'DELETE' })
-export const deleteArchivedDiffSinger = (archivedName: string) =>
-  fetchJSON<any>(`/api/models/diffsinger/archived/${encodeURIComponent(archivedName)}`, { method: 'DELETE' })
+// DiffSinger removed — replaced by Score2HuBERT. Stubs kept for compile compat.
+export const getDiffSingerModels = () => Promise.resolve([])
+export const getDiffSingerCatalog = () => Promise.resolve({ vocoders: [], singers: [] })
+export const downloadDiffSingerModel = (_id: string) => Promise.resolve({ status: 'removed' })
+export const getDiffSingerDownloadStatus = (_id: string) => Promise.resolve({ status: 'not_found', progress: 0 } as any)
+export async function importDiffSingerModel(_f: File) { return { status: 'removed' } }
+export const archiveDiffSinger = (_id: string) => Promise.resolve({ status: 'removed' })
+export const getArchivedDiffSinger = () => Promise.resolve([])
+export const restoreDiffSinger = (_n: string) => Promise.resolve({ status: 'removed' })
+export const deleteDiffSinger = (_id: string) => Promise.resolve({ status: 'removed' })
+export const deleteArchivedDiffSinger = (_n: string) => Promise.resolve({ status: 'removed' })
 
 // Audio
 export async function uploadAudio(file: File) {
@@ -341,10 +321,14 @@ export async function importWorkflowAuto(): Promise<any> {
     const filePath = await window.electronAPI!.openFile({
       title: 'Import Project',
       filters: [
-        { name: 'Utai Project', extensions: ['utai', 'utaiTr'] },
+        { name: 'Utai Project', extensions: ['utai', 'utaiTr', 'utaiSynth'] },
       ],
     })
     if (!filePath) return { status: 'cancelled' }
+    if (filePath.endsWith('.utaiSynth')) {
+      const data = await fetchJSON<any>('/api/synth/project/open-path', { method: 'POST', body: JSON.stringify(filePath) })
+      return { ...data, project_type: 'synth', path: filePath }
+    }
     return fetchJSON<any>('/api/workflows/import-path', {
       method: 'POST',
       body: JSON.stringify({ path: filePath }),

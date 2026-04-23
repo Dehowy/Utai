@@ -18,15 +18,18 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from app.backend.api.routes_audio import router as audio_router
-from app.backend.api.routes_execute import router as execute_router
-from app.backend.api.routes_models import router as models_router
 from app.backend.api.routes_system import router as system_router
-from app.backend.api.routes_cleanup import router as cleanup_router
-from app.backend.api.routes_train import router as train_router
 from app.backend.api.routes_workflow import router as workflow_router
-from app.backend.api.routes_synth import router as synth_router
-from app.backend.api.routes_vst import router as vst_router
-from app.backend.api.routes_effects import router as effects_router
+
+# Optional routers — may fail if dependencies not installed
+import logging as _logging
+_opt_routers = []
+for _name in ['routes_execute', 'routes_models', 'routes_cleanup', 'routes_train', 'routes_synth', 'routes_vst', 'routes_effects']:
+    try:
+        _mod = __import__(f'app.backend.api.{_name}', fromlist=['router'])
+        _opt_routers.append(_mod.router)
+    except Exception as _e:
+        _logging.getLogger('utai.startup').warning(f'Skipped {_name}: {_e}')
 from app.backend.config import TEMP_DIR
 from app.backend.core.node_registry import register_all_nodes
 
@@ -46,10 +49,10 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# CORS for development (Vite dev server on different port)
+# CORS — allow any localhost port (Vite dev server, Electron backend on dynamic port)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origin_regex=r"^https?://(127\.0\.0\.1|localhost)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,15 +60,10 @@ app.add_middleware(
 
 # Include routers
 app.include_router(audio_router)
-app.include_router(cleanup_router)
-app.include_router(execute_router)
-app.include_router(models_router)
 app.include_router(system_router)
-app.include_router(train_router)
 app.include_router(workflow_router)
-app.include_router(synth_router)
-app.include_router(vst_router)
-app.include_router(effects_router)
+for _r in _opt_routers:
+    app.include_router(_r)
 
 @app.on_event("startup")
 async def startup_cleanup():
@@ -119,6 +117,12 @@ async def startup_cleanup():
 # In dev mode, Vite on a separate port handles the frontend.
 # Direct backend access (http://localhost:8765) should NOT serve any UI.
 if os.getenv("UTAI_SERVE_STATIC") == "1":
+    _static_logger = logging.getLogger("utai.startup")
     static_dir = Path(__file__).parent / "static"
     if static_dir.exists() and any(static_dir.iterdir()):
         app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+        _static_logger.info("Static frontend mounted from %s", static_dir)
+    else:
+        _static_logger.error(
+            "UTAI_SERVE_STATIC=1 but no static files at %s — frontend will not load!", static_dir
+        )

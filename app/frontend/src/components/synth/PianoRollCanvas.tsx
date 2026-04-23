@@ -1,15 +1,17 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useSynthStore } from '../../store/synthStore';
 import { defaultPitch, defaultVibrato, RESOLUTION } from '../../types/ustx';
-import { renderPianoRoll, screenToTick, screenToMidi, snapTick, snapTickFloor, tickToScreen, midiToScreen, HEADER_H, KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
+import { renderPianoRoll, screenToTick, screenToMidi, snapTick, snapTickFloor, tickToScreen, midiToScreen, ticksToDurationLabel, hitTestPitchPoint, HEADER_H, KEYBOARD_W } from '../../lib/synth/pianoRollEngine';
 import { hitTest } from '../../lib/synth/noteInteraction';
 import { playNote } from '../../lib/synth/pitchPreview';
 import * as engine from '../../lib/synth/audioEngine';
-import { SNAP_OPTIONS } from './PianoRollToolbar';
+import { SNAP_OPTIONS, SNAP_ATOMS_ASC } from './PianoRollToolbar';
+import { renderVST } from '../../api/client';
 import LyricEditor from './LyricEditor';
 
 interface DragState {
-  mode: 'none' | 'move' | 'resize' | 'draw' | 'select-rect' | 'scroll' | 'playhead';
+  mode: 'none' | 'move' | 'resize' | 'draw' | 'select-rect' | 'erase-rect' | 'scroll' | 'playhead' | 'pitch-point';
+  pitchHit?: { partIndex: number; noteIndex: number; pointIndex: number; noteX0: number; noteXEnd: number; noteDurMs: number; baseMidi: number };
   startX: number; startY: number; startTick: number; startMidi: number;
   noteId?: string; partIndex?: number; noteIndex?: number;
   origScrollX?: number; origScrollY?: number;
@@ -21,25 +23,63 @@ interface GhostNote { tick: number; midi: number; }
 export default function PianoRollCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const store = useSynthStore();
+  const project = useSynthStore(s => s.project);
+  const viewState = useSynthStore(s => s.viewState);
+  const selectedNotes = useSynthStore(s => s.selectedNotes);
+  const activePartIndex = useSynthStore(s => s.activePartIndex);
+  const activeInstrumentPartIndex = useSynthStore(s => s.activeInstrumentPartIndex);
+  const playbackPositionTicks = useSynthStore(s => s.playbackPositionTicks);
+  const activeTool = useSynthStore(s => s.activeTool);
   const [size, setSize] = useState({ width: 800, height: 600 });
   const dragRef = useRef<DragState>({ mode: 'none', startX: 0, startY: 0, startTick: 0, startMidi: 0 });
   const [lyricEdit, setLyricEdit] = useState<{ partIndex: number; noteIndex: number; value: string } | null>(null);
   const [hoverMidi, setHoverMidi] = useState<number | null>(null);
   const [ghostNote, setGhostNote] = useState<GhostNote | null>(null);
+  const [hoverPitchPt, setHoverPitchPt] = useState<{ noteIndex: number; pointIndex: number } | null>(null);
   const [selectRect, setSelectRect] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [hoverPlayhead, setHoverPlayhead] = useState(false);
   // Track whether lyric editor is open via ref (readable in stale closures)
   const lyricEditRef = useRef(false);
+  // Track Tab key held state for Tab+wheel vertical zoom
+  const tabHeld = useRef(false);
   // Auto-scroll state for playhead edge-dragging (continuous rAF loop)
   const autoScrollRef = useRef<{ speed: number; mouseX: number; rafId: number | null }>({ speed: 0, mouseX: 0, rafId: null });
   // Track right-click on empty area for double-right-click → select tool
   const lastRightClickRef = useRef<{ time: number; x: number; y: number }>({ time: 0, x: 0, y: 0 });
 
+  /** Preview a note via VST backend render (instrument tracks).
+   *  Empty deps OK — reads state via getState() at call time. */
+  const playVSTPreview = useCallback((midi: number, durationSec?: number) => {
+    const s = useSynthStore.getState();
+    const instIdx = s.activeInstrumentPartIndex;
+    if (instIdx < 0) return;
+    const instPart = s.project.instrument_parts[instIdx];
+    const track = instPart ? s.project.tracks[instPart.track_no] : null;
+    if (!track?.plugin_name) { playNote(midi, durationSec); return; }
+    const bpm = s.project.tempos[0]?.bpm ?? 120;
+    const dur = durationSec ?? 0.3;
+    renderVST({ plugin_name: track.plugin_name, notes: [{ tone: midi, velocity: 100, start: 0, duration: dur }], bpm })
+      .then(blob => { const url = URL.createObjectURL(blob); const a = new Audio(url); a.play(); a.onended = () => URL.revokeObjectURL(url); })
+      .catch(() => playNote(midi, durationSec));
+  }, []);
+
+  /** Get max relative tick for active part (Infinity if last segment on track). */
+  const getPartMaxRelTick = useCallback(() => {
+    const s = useSynthStore.getState();
+    if (s.activePartIndex < 0) return Infinity;
+    const part = s.project.voice_parts[s.activePartIndex];
+    if (!part) return Infinity;
+    const next = s.project.voice_parts.find(
+      vp => vp.track_no === part.track_no && vp.position > part.position
+    );
+    return next ? next.position - part.position : Infinity;
+  }, []);
+
   /** Start playhead drag with window-level mouse capture (survives canvas exit). */
   const startPlayheadDrag = useCallback((initialX: number, initialY: number) => {
     const s = useSynthStore.getState();
-    const tick = Math.max(0, screenToTick(initialX, s.viewState));
+    const partMin = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
+    const tick = Math.max(partMin, screenToTick(initialX, s.viewState));
     s.setPlaybackPosition(tick);
     engine.seek(engine.ticksToSeconds(tick, s.project.tempos));
     dragRef.current = { mode: 'playhead', startX: initialX, startY: initialY, startTick: tick, startMidi: 0 };
@@ -54,21 +94,24 @@ export default function PianoRollCanvas() {
       const mx = ev.clientX - rect.left;
       autoScrollRef.current.mouseX = mx;
 
-      // Update playhead position
+      // Update playhead position (clamped to active part, no dead zone)
       const st = useSynthStore.getState();
-      if (mx > KEYBOARD_W) {
-        const t = Math.max(0, (mx - KEYBOARD_W + st.viewState.scrollX) / st.viewState.pixelsPerTick);
-        st.setPlaybackPosition(t);
-        engine.seek(engine.ticksToSeconds(t, st.project.tempos));
-      }
+      const pMin = st.project.voice_parts[st.activePartIndex]?.position ?? 0;
+      const effectiveX = Math.max(KEYBOARD_W, mx);
+      const t = Math.max(pMin, (effectiveX - KEYBOARD_W + st.viewState.scrollX) / st.viewState.pixelsPerTick);
+      st.setPlaybackPosition(t);
+      engine.seek(engine.ticksToSeconds(t, st.project.tempos));
 
       // Determine edge-scroll speed (works even when mouse is outside canvas)
       let speed = 0;
       const w = rect.width;
       if (mx > w - edgeMargin) {
         speed = Math.min(5, (mx - (w - edgeMargin)) / edgeMargin + 1);
-      } else if (mx < KEYBOARD_W + edgeMargin && st.viewState.scrollX > 0) {
-        speed = -Math.min(5, (KEYBOARD_W + edgeMargin - mx) / edgeMargin + 1);
+      } else if (mx < KEYBOARD_W + edgeMargin) {
+        const pMinPx = (st.project.voice_parts[st.activePartIndex]?.position ?? 0) * st.viewState.pixelsPerTick;
+        if (st.viewState.scrollX > pMinPx) {
+          speed = -Math.min(5, (KEYBOARD_W + edgeMargin - mx) / edgeMargin + 1);
+        }
       }
       autoScrollRef.current.speed = speed;
 
@@ -78,9 +121,11 @@ export default function PianoRollCanvas() {
           const as = autoScrollRef.current;
           if (as.speed === 0 || dragRef.current.mode !== 'playhead') { as.rafId = null; return; }
           const cur = useSynthStore.getState();
-          const newScrollX = Math.max(0, cur.viewState.scrollX + as.speed * 6);
+          const pMinPx2 = (cur.project.voice_parts[cur.activePartIndex]?.position ?? 0) * cur.viewState.pixelsPerTick;
+          const pMinTick = cur.project.voice_parts[cur.activePartIndex]?.position ?? 0;
+          const newScrollX = Math.max(pMinPx2, cur.viewState.scrollX + as.speed * 6);
           cur.setViewState({ scrollX: newScrollX });
-          const newTick = Math.max(0, (as.mouseX - KEYBOARD_W + newScrollX) / cur.viewState.pixelsPerTick);
+          const newTick = Math.max(pMinTick, (as.mouseX - KEYBOARD_W + newScrollX) / cur.viewState.pixelsPerTick);
           cur.setPlaybackPosition(newTick);
           engine.seek(engine.ticksToSeconds(newTick, cur.project.tempos));
           as.rafId = requestAnimationFrame(frame);
@@ -126,15 +171,28 @@ export default function PianoRollCanvas() {
     canvas.width = size.width * devicePixelRatio;
     canvas.height = size.height * devicePixelRatio;
     ctx.scale(devicePixelRatio, devicePixelRatio);
-    const instIdx = store.activeInstrumentPartIndex;
-    const instPart = instIdx >= 0 ? store.project.instrument_parts[instIdx] : null;
+    const instIdx = activeInstrumentPartIndex;
+    const instPart = instIdx >= 0 ? project.instrument_parts[instIdx] : null;
+    // Compute part boundary if next segment exists on same track
+    const activePart = project.voice_parts[activePartIndex];
+    let partEndTick: number | undefined;
+    if (activePart) {
+      const nextPart = project.voice_parts.find(
+        vp => vp.track_no === activePart.track_no && vp.position > activePart.position
+      );
+      if (nextPart) partEndTick = nextPart.position;
+    }
+
     renderPianoRoll({
       ctx, width: size.width, height: size.height,
-      project: store.project, viewState: store.viewState,
-      selectedNotes: store.selectedNotes, activePartIndex: store.activePartIndex,
+      project: project, viewState: viewState,
+      selectedNotes: selectedNotes, activePartIndex: activePartIndex,
       hoverMidi, hoverPlayhead,
-      playheadTicks: store.playbackPositionTicks,
+      playheadTicks: playbackPositionTicks,
       instrumentPart: instPart,
+      partEndTick,
+      pitchToolActive: activeTool === 'pitch',
+      hoverPitchPoint: hoverPitchPt,
     });
     // Draw selection rectangle
     if (selectRect) {
@@ -142,9 +200,10 @@ export default function PianoRollCanvas() {
       const ry = Math.min(selectRect.y1, selectRect.y2);
       const rw = Math.abs(selectRect.x2 - selectRect.x1);
       const rh = Math.abs(selectRect.y2 - selectRect.y1);
-      ctx.fillStyle = 'rgba(155, 109, 255, 0.12)';
+      const isEraseRect = activeTool === 'erase';
+      ctx.fillStyle = isEraseRect ? 'rgba(255, 107, 157, 0.15)' : 'rgba(155, 109, 255, 0.12)';
       ctx.fillRect(rx, ry, rw, rh);
-      ctx.strokeStyle = 'rgba(155, 109, 255, 0.5)';
+      ctx.strokeStyle = isEraseRect ? 'rgba(255, 107, 157, 0.5)' : 'rgba(155, 109, 255, 0.5)';
       ctx.lineWidth = 1;
       ctx.setLineDash([4, 3]);
       ctx.strokeRect(rx, ry, rw, rh);
@@ -153,11 +212,11 @@ export default function PianoRollCanvas() {
 
     // Draw ghost note preview
     if (ghostNote && !lyricEdit) {
-      const vs = store.viewState;
-      const instPartActive = store.activeInstrumentPartIndex >= 0;
+      const vs = viewState;
+      const instPartActive = activeInstrumentPartIndex >= 0;
       const partPos = instPartActive
-        ? (store.project.instrument_parts[store.activeInstrumentPartIndex]?.position ?? 0)
-        : (store.project.voice_parts[store.activePartIndex]?.position ?? 0);
+        ? (project.instrument_parts[activeInstrumentPartIndex]?.position ?? 0)
+        : (project.voice_parts[activePartIndex]?.position ?? 0);
       const gx = tickToScreen(partPos + ghostNote.tick, vs);
       const gy = midiToScreen(ghostNote.midi, vs);
       const gw = vs.snapTicks * vs.pixelsPerTick;
@@ -169,8 +228,18 @@ export default function PianoRollCanvas() {
       ctx.setLineDash([3, 3]);
       ctx.strokeRect(gx, gy + 1, gw - 1, gh - 2);
       ctx.setLineDash([]);
+      // Duration label on ghost note
+      if (gw > 20) {
+        const label = ticksToDurationLabel(vs.snapTicks);
+        ctx.fillStyle = instPartActive ? 'rgba(232, 148, 75, 0.7)' : 'rgba(155, 109, 255, 0.7)';
+        ctx.font = `${Math.min(10, gh - 4)}px 'DotGothic16', sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.fillText(label, gx + gw / 2, gy + gh / 2, gw - 4);
+        ctx.textAlign = 'left';
+      }
     }
-  }, [size, store.project, store.viewState, store.selectedNotes, store.activePartIndex, store.activeInstrumentPartIndex, store.playbackPositionTicks, hoverMidi, hoverPlayhead, ghostNote, lyricEdit, selectRect]);
+  }, [size, project, viewState, selectedNotes, activePartIndex, activeInstrumentPartIndex, playbackPositionTicks, activeTool, hoverMidi, hoverPlayhead, ghostNote, lyricEdit, selectRect, hoverPitchPt]);
 
   // Convert mouse event to canvas-local CSS-pixel coordinates.
   // Use nativeEvent.offsetX/Y which the browser computes directly,
@@ -219,7 +288,7 @@ export default function PianoRollCanvas() {
 
       if (x <= KEYBOARD_W) {
         const midi = Math.ceil(screenToMidi(y, s.viewState));
-        if (midi >= 0 && midi <= 127) playNote(midi, 0.3);
+        if (midi >= 0 && midi <= 127) playVSTPreview(midi, 0.3);
         return;
       }
 
@@ -259,15 +328,18 @@ export default function PianoRollCanvas() {
         if (hitIdx >= 0) {
           const noteId = `i${instIdx}-${hitIdx}`;
           s.selectNotes([noteId]);
-          playNote(clickMidi);
           dragRef.current = { mode: 'move', startX: x, startY: y, startTick: screenToTick(x, s.viewState), startMidi: clickMidi, noteId };
+          // VST preview
+          const bpm = s.project.tempos[0]?.bpm ?? 120;
+          const durSec = instPart.notes[hitIdx].duration / (480 * bpm / 60);
+          playVSTPreview(clickMidi, durSec);
           return;
         }
 
         // Empty area → create new note
         const rawTick = clickTick - partPos;
         const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
-        playNote(clickMidi);
+        playVSTPreview(clickMidi);
         s.addInstrumentNote(instIdx, {
           position: Math.max(0, snappedTick),
           duration: s.viewState.snapTicks,
@@ -284,6 +356,15 @@ export default function PianoRollCanvas() {
     if (hit.type === 'keyboard') {
       const midi = Math.ceil(screenToMidi(y, s.viewState));
       if (midi >= 0 && midi <= 127) playNote(midi, 0.3);
+      return;
+    }
+
+    // Right-click in pitch mode → delete pitch point only
+    if (e.button === 2 && s.activeTool === 'pitch') {
+      const pitchHit2 = hitTestPitchPoint(x, y, s.project, s.viewState, s.activePartIndex);
+      if (pitchHit2 && pitchHit2.pointIndex >= 0) {
+        s.deletePitchPoint(pitchHit2.partIndex, pitchHit2.noteIndex, pitchHit2.pointIndex);
+      }
       return;
     }
 
@@ -312,12 +393,80 @@ export default function PianoRollCanvas() {
       return;
     }
 
+    // --- Alt+left-click → toggle pitch mode ---
+    if (e.altKey && e.button === 0 && !e.shiftKey && !e.ctrlKey) {
+      s.setTool(s.activeTool === 'pitch' ? 'select' : 'pitch');
+      return;
+    }
+
+    // --- Ctrl+click in pitch mode → create/delete notes without leaving pitch mode ---
+    if (e.ctrlKey && s.activeTool === 'pitch') {
+      if (e.button === 0 && x > KEYBOARD_W && y > HEADER_H) {
+        // Ctrl+left-click → create note at position
+        const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
+        const rawTick = screenToTick(x, s.viewState) - partPos;
+        const maxRelTick = getPartMaxRelTick();
+        if (rawTick < maxRelTick) {
+          const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
+          const midi = Math.max(0, Math.min(127, Math.ceil(screenToMidi(y, s.viewState))));
+          const notePos = Math.max(0, snappedTick);
+          s.addNote(s.activePartIndex, {
+            position: notePos, duration: s.viewState.snapTicks, tone: midi,
+            lyric: useSynthStore.getState().language === 'ja' ? 'あ' : '啊',
+            pitch: defaultPitch(s.viewState.snapTicks / ((s.project.tempos[0]?.bpm ?? 120) * 480 / 60) * 1000), vibrato: defaultVibrato(), tuning: 0,
+            phoneme_expressions: [], phoneme_overrides: [],
+          });
+        }
+      } else if (e.button === 2) {
+        // Ctrl+right-click → delete note under cursor
+        if (hit.type === 'note') s.deleteNotes([hit.noteId]);
+      }
+      return;
+    }
+
+    // --- Pitch tool mode: ALL left-click interactions are pitch-only ---
+    if (s.activeTool === 'pitch' && e.button === 0) {
+      const pitchHit = hitTestPitchPoint(x, y, s.project, s.viewState, s.activePartIndex);
+      if (pitchHit && pitchHit.pointIndex >= 0) {
+        // Left-click on control point → drag
+        dragRef.current = { mode: 'pitch-point', startX: x, startY: y, startTick: 0, startMidi: 0, pitchHit };
+      } else if (pitchHit && pitchHit.pointIndex === -1) {
+        // Left-click on curve line → add point here
+        const frac = Math.max(0, Math.min(1, (x - pitchHit.noteX0) / (pitchHit.noteXEnd - pitchHit.noteX0)));
+        const ptX = Math.round(frac * pitchHit.noteDurMs);
+        const noteBaseY = HEADER_H + (127 - pitchHit.baseMidi) * s.viewState.pixelsPerSemitone - s.viewState.scrollY;
+        const ptY = Math.round(-((y - noteBaseY - s.viewState.pixelsPerSemitone / 2) / s.viewState.pixelsPerSemitone) * 100) / 10;
+        s.addPitchPoint(pitchHit.partIndex, pitchHit.noteIndex, ptX, ptY);
+      } else {
+        // Left-click on note without curve → add first point
+        const noteHit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
+        if (noteHit.type === 'note' && noteHit.partIndex !== undefined && noteHit.noteIndex !== undefined) {
+          const part = s.project.voice_parts[noteHit.partIndex];
+          const note = part?.notes[noteHit.noteIndex];
+          if (note && part) {
+            const bpm = s.project.tempos[0]?.bpm ?? 120;
+            const ticksPerSec = (bpm * 480) / 60;
+            const absTick = part.position + note.position;
+            const noteX0 = KEYBOARD_W + absTick * s.viewState.pixelsPerTick - s.viewState.scrollX;
+            const noteXEnd = noteX0 + note.duration * s.viewState.pixelsPerTick;
+            const noteDurMs = (note.duration / ticksPerSec) * 1000;
+            const frac = Math.max(0, Math.min(1, (x - noteX0) / (noteXEnd - noteX0)));
+            const ptX = Math.round(frac * noteDurMs);
+            const noteBaseY = HEADER_H + (127 - note.tone) * s.viewState.pixelsPerSemitone - s.viewState.scrollY;
+            const ptY = Math.round(-((y - noteBaseY - s.viewState.pixelsPerSemitone / 2) / s.viewState.pixelsPerSemitone) * 100) / 10;
+            s.addPitchPoint(noteHit.partIndex, noteHit.noteIndex, ptX, ptY);
+          }
+        }
+      }
+      return; // block everything else in pitch mode
+    }
+    if (s.activeTool === 'pitch') return; // block right-click note operations too
+
     // --- Smart tool behavior ---
     if (s.activeTool === 'erase') {
-      if (hit.type === 'note') {
-        s.deleteNotes([hit.noteId]);
-      } else if (hit.type === 'empty') {
-        s.setTool('draw');
+      if (x > KEYBOARD_W && y > HEADER_H) {
+        dragRef.current = { mode: 'erase-rect', startX: x, startY: y, startTick: screenToTick(x, s.viewState), startMidi: Math.round(screenToMidi(y, s.viewState)) };
+        setSelectRect({ x1: x, y1: y, x2: x, y2: y });
       }
     } else if (s.activeTool === 'select' && hit.type === 'empty') {
       // Selection rectangle drag (multi-select)
@@ -343,6 +492,8 @@ export default function PianoRollCanvas() {
       if (s.activeTool !== 'draw') s.setTool('draw');
       const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
       const rawTick = hit.tick - partPos;
+      const maxRelTick = getPartMaxRelTick();
+      if (rawTick >= maxRelTick) return; // beyond segment boundary
       const part = s.project.voice_parts[s.activePartIndex];
       let snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
       if (part && part.notes.length > 0) {
@@ -359,8 +510,8 @@ export default function PianoRollCanvas() {
       playNote(midi);
       const notePos = Math.max(0, snappedTick);
       s.addNote(s.activePartIndex, {
-        position: notePos, duration: s.viewState.snapTicks, tone: midi, lyric: 'a',
-        pitch: defaultPitch(), vibrato: defaultVibrato(), tuning: 0, phoneme_expressions: [], phoneme_overrides: [],
+        position: notePos, duration: s.viewState.snapTicks, tone: midi, lyric: useSynthStore.getState().language === 'ja' ? 'あ' : '啊',
+        pitch: defaultPitch(s.viewState.snapTicks / ((s.project.tempos[0]?.bpm ?? 120) * 480 / 60) * 1000), vibrato: defaultVibrato(), tuning: 0, phoneme_expressions: [], phoneme_overrides: [],
       });
       // Auto-open lyric editor on the newly added note.
       // Delay so the mousedown event fully settles (browser focus handling)
@@ -372,7 +523,7 @@ export default function PianoRollCanvas() {
           const ni = updatedPart.notes.findIndex(n => n.position === notePos && n.tone === midi);
           if (ni >= 0) {
             lyricEditRef.current = true;
-            setLyricEdit({ partIndex: partIdx, noteIndex: ni, value: 'a' });
+            setLyricEdit({ partIndex: partIdx, noteIndex: ni, value: useSynthStore.getState().language === 'ja' ? 'あ' : '啊' });
           }
         }
       });
@@ -415,18 +566,39 @@ export default function PianoRollCanvas() {
       } else if (x <= KEYBOARD_W) {
         canvas.style.cursor = 'pointer';
       } else if (isInstMode) {
-        canvas.style.cursor = 'crosshair';
+        // Check if hovering an instrument note
+        const instPart = s.project.instrument_parts[instIdx];
+        if (instPart && x > KEYBOARD_W && y > HEADER_H) {
+          const clickTick = screenToTick(x, s.viewState);
+          const clickMidi = Math.ceil(screenToMidi(y, s.viewState));
+          const onNote = instPart.notes.some(n =>
+            clickTick >= instPart.position + n.position &&
+            clickTick <= instPart.position + n.position + n.duration &&
+            clickMidi === n.tone
+          );
+          canvas.style.cursor = onNote ? 'move' : 'crosshair';
+        } else {
+          canvas.style.cursor = 'crosshair';
+        }
       } else {
-        const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
-        if (hit.type === 'resize') canvas.style.cursor = 'col-resize';
-        else if (hit.type === 'note') canvas.style.cursor = 'move';
-        else canvas.style.cursor = s.activeTool === 'draw' ? 'crosshair' : 'default';
+        const pitchPt = hitTestPitchPoint(x, y, s.project, s.viewState, s.activePartIndex);
+        setHoverPitchPt(pitchPt ? { noteIndex: pitchPt.noteIndex, pointIndex: pitchPt.pointIndex } : null);
+        if (s.activeTool === 'pitch') {
+          canvas.style.cursor = pitchPt ? (pitchPt.pointIndex >= 0 ? 'grab' : 'copy') : 'default';
+        } else {
+          const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
+          if (hit.type === 'resize') canvas.style.cursor = 'col-resize';
+          else if (hit.type === 'note') canvas.style.cursor = 'move';
+          else canvas.style.cursor = (s.activeTool === 'draw' || s.activeTool === 'erase') ? 'crosshair' : 'default';
+        }
       }
     }
 
     // Ghost note preview when hovering empty area (no drag, not over keyboard/header)
     if (drag.mode === 'none' && x > KEYBOARD_W && y > HEADER_H) {
-      if (isInstMode) {
+      if (s.activeTool === 'erase') {
+        setGhostNote(null);
+      } else if (isInstMode) {
         // Instrument mode: simple snap, no voice-part hitTest
         const instPart = s.project.instrument_parts[instIdx];
         const partPos = instPart?.position ?? 0;
@@ -448,7 +620,12 @@ export default function PianoRollCanvas() {
               if (Math.abs(rawTick - noteEnd) < tolerance) { snappedTick = noteEnd; break; }
             }
           }
-          setGhostNote({ tick: Math.max(0, snappedTick), midi: Math.max(0, Math.min(127, hit.midi)) });
+          const maxRelTick = getPartMaxRelTick();
+          if (snappedTick >= maxRelTick) {
+            setGhostNote(null);
+          } else {
+            setGhostNote({ tick: Math.max(0, snappedTick), midi: Math.max(0, Math.min(127, hit.midi)) });
+          }
         } else {
           setGhostNote(null);
         }
@@ -463,7 +640,62 @@ export default function PianoRollCanvas() {
     // so skip it here to avoid duplicate handling.
     if (drag.mode === 'playhead') return;
 
-    if (drag.mode === 'select-rect') {
+    if (drag.mode === 'pitch-point' && drag.pitchHit) {
+      const ph = drag.pitchHit;
+      const frac = Math.max(0, Math.min(1, (x - ph.noteX0) / (ph.noteXEnd - ph.noteX0)));
+      const newX = frac * ph.noteDurMs;
+      const noteBaseY = HEADER_H + (127 - ph.baseMidi) * s.viewState.pixelsPerSemitone - s.viewState.scrollY;
+      let newY = -((y - noteBaseY - s.viewState.pixelsPerSemitone / 2) / s.viewState.pixelsPerSemitone) * 10;
+
+      if (useSynthStore.getState().pitchSnap) {
+        // Snap to base pitch (y=0) if within 1/4 semitone
+        if (Math.abs(newY) < 2.5) newY = 0;
+
+        // Snap to adjacent point's y within same note (horizontal line snap)
+        const part0 = s.project.voice_parts[ph.partIndex];
+        const curData = part0?.notes[ph.noteIndex]?.pitch?.data;
+        if (curData) {
+          const pi = ph.pointIndex;
+          if (pi > 0 && Math.abs(newY - curData[pi - 1].y) < 2.5) newY = curData[pi - 1].y;
+          else if (pi < curData.length - 1 && Math.abs(newY - curData[pi + 1].y) < 2.5) newY = curData[pi + 1].y;
+        }
+
+        // Snap to adjacent note's curve endpoint
+        const part = s.project.voice_parts[ph.partIndex];
+        const note = part?.notes[ph.noteIndex];
+        if (note && part) {
+          const noteIdx = ph.noteIndex;
+          // Check previous note's last pitch point
+          if (noteIdx > 0) {
+            const prevNote = part.notes[noteIdx - 1];
+            const prevData = prevNote?.pitch?.data;
+            if (prevData && prevData.length > 0) {
+              const lastPt = prevData[prevData.length - 1];
+              // Convert prev note's y to this note's coordinate: account for MIDI difference
+              const midiDiff = (prevNote.tone - note.tone) * 10; // in 0.1 semitones
+              const adjY = lastPt.y + midiDiff;
+              if (Math.abs(newY - adjY) < 2.5) newY = adjY;
+            }
+          }
+          // Check next note's first pitch point
+          if (noteIdx < part.notes.length - 1) {
+            const nextNote = part.notes[noteIdx + 1];
+            const nextData = nextNote?.pitch?.data;
+            if (nextData && nextData.length > 0) {
+              const firstPt = nextData[0];
+              const midiDiff = (nextNote.tone - note.tone) * 10;
+              const adjY = firstPt.y + midiDiff;
+              if (Math.abs(newY - adjY) < 2.5) newY = adjY;
+            }
+          }
+        }
+      }
+
+      s.setPitchPoint(ph.partIndex, ph.noteIndex, ph.pointIndex, Math.round(newX), Math.round(newY * 10) / 10);
+      return;
+    }
+
+    if (drag.mode === 'select-rect' || drag.mode === 'erase-rect') {
       setSelectRect(prev => prev ? { ...prev, x2: x, y2: y } : null);
       return;
     }
@@ -482,10 +714,15 @@ export default function PianoRollCanvas() {
       const deltaTick = snapTick(currentTick - drag.startTick, s.viewState.snapTicks);
       const deltaTone = currentMidi - drag.startMidi;
       if (deltaTick !== 0 || deltaTone !== 0) {
-        s.moveNotes([...s.selectedNotes], deltaTick, deltaTone);
+        const noteIds = [...s.selectedNotes];
+        const isInst = noteIds.some(id => id.startsWith('i'));
+        if (isInst) {
+          s.moveInstrumentNotes(noteIds, deltaTick, deltaTone);
+        } else {
+          s.moveNotes(noteIds, deltaTick, deltaTone);
+        }
         drag.startTick += deltaTick;
         drag.startMidi += deltaTone;
-        // Play pitch preview when dragging to a new row
         if (deltaTone !== 0) {
           const newMidi = Math.max(0, Math.min(127, currentMidi));
           playNote(newMidi);
@@ -496,7 +733,9 @@ export default function PianoRollCanvas() {
       const part = s.project.voice_parts[drag.partIndex];
       const note = part?.notes[drag.noteIndex];
       if (note && part) {
-        const newDuration = snapTick(currentTick - (part.position + note.position), s.viewState.snapTicks);
+        // Snap resize to smallest atom (1/32T) for fine control
+        const fineSnap = SNAP_ATOMS_ASC[0].ticks;
+        const newDuration = snapTick(currentTick - (part.position + note.position), fineSnap);
         if (newDuration > 0) s.resizeNote(drag.partIndex, drag.noteIndex, newDuration);
       }
     }
@@ -511,7 +750,29 @@ export default function PianoRollCanvas() {
     autoScrollRef.current.speed = 0;
 
     const drag = dragRef.current;
-    if (drag.mode === 'select-rect' && selectRect) {
+    if (drag.mode === 'erase-rect' && selectRect) {
+      const s = useSynthStore.getState();
+      const minX = Math.min(selectRect.x1, selectRect.x2);
+      const maxX = Math.max(selectRect.x1, selectRect.x2);
+      const minY = Math.min(selectRect.y1, selectRect.y2);
+      const maxY = Math.max(selectRect.y1, selectRect.y2);
+      const minTick = screenToTick(minX, s.viewState);
+      const maxTick = screenToTick(maxX, s.viewState);
+      const topMidi = Math.ceil(screenToMidi(minY, s.viewState));
+      const botMidi = Math.floor(screenToMidi(maxY, s.viewState));
+      const ids: string[] = [];
+      s.project.voice_parts.forEach((part, pi) => {
+        part.notes.forEach((note, ni) => {
+          const absPos = part.position + note.position;
+          const absEnd = absPos + note.duration;
+          if (absEnd >= minTick && absPos <= maxTick && note.tone >= botMidi && note.tone <= topMidi) {
+            ids.push(`${pi}-${ni}`);
+          }
+        });
+      });
+      if (ids.length > 0) s.deleteNotes(ids);
+      setSelectRect(null);
+    } else if (drag.mode === 'select-rect' && selectRect) {
       // Find notes within rectangle
       const s = useSynthStore.getState();
       const minX = Math.min(selectRect.x1, selectRect.x2);
@@ -541,8 +802,10 @@ export default function PianoRollCanvas() {
   }, [selectRect]);
 
   const onDoubleClick = useCallback((e: React.MouseEvent<HTMLCanvasElement>) => {
-    const { x, y } = canvasXY(e);
+    if (lyricEditRef.current) return;
     const s = useSynthStore.getState();
+    if (s.activeTool === 'pitch' || s.activeTool === 'erase') return;
+    const { x, y } = canvasXY(e);
     const hit = hitTest(x, y, s.project, s.viewState, s.activePartIndex);
     if (hit.type === 'note') {
       const note = s.project.voice_parts[hit.partIndex]?.notes[hit.noteIndex];
@@ -552,16 +815,18 @@ export default function PianoRollCanvas() {
       }
     } else if (hit.type === 'empty' && y > HEADER_H && x > KEYBOARD_W) {
       // Double-click empty area in select mode → switch to draw and create note
-      s.setTool('draw');
       const partPos = s.project.voice_parts[s.activePartIndex]?.position ?? 0;
       const rawTick = hit.tick - partPos;
+      const maxRelTick = getPartMaxRelTick();
+      if (rawTick >= maxRelTick) return; // beyond segment boundary
+      s.setTool('draw');
       const snappedTick = snapTickFloor(rawTick, Math.min(s.viewState.snapTicks, RESOLUTION));
       const midi = Math.max(0, Math.min(127, hit.midi));
       playNote(midi);
       const notePos = Math.max(0, snappedTick);
       s.addNote(s.activePartIndex, {
-        position: notePos, duration: s.viewState.snapTicks, tone: midi, lyric: 'a',
-        pitch: defaultPitch(), vibrato: defaultVibrato(), tuning: 0, phoneme_expressions: [], phoneme_overrides: [],
+        position: notePos, duration: s.viewState.snapTicks, tone: midi, lyric: useSynthStore.getState().language === 'ja' ? 'あ' : '啊',
+        pitch: defaultPitch(s.viewState.snapTicks / ((s.project.tempos[0]?.bpm ?? 120) * 480 / 60) * 1000), vibrato: defaultVibrato(), tuning: 0, phoneme_expressions: [], phoneme_overrides: [],
       });
       const partIdx = s.activePartIndex;
       requestAnimationFrame(() => {
@@ -570,7 +835,7 @@ export default function PianoRollCanvas() {
           const ni = updatedPart.notes.findIndex(n => n.position === notePos && n.tone === midi);
           if (ni >= 0) {
             lyricEditRef.current = true;
-            setLyricEdit({ partIndex: partIdx, noteIndex: ni, value: 'a' });
+            setLyricEdit({ partIndex: partIdx, noteIndex: ni, value: useSynthStore.getState().language === 'ja' ? 'あ' : '啊' });
           }
         }
       });
@@ -584,25 +849,108 @@ export default function PianoRollCanvas() {
       e.preventDefault();
       const s = useSynthStore.getState();
       if (e.altKey) {
-        // Alt+wheel → cycle note type (snap)
-        const curIdx = SNAP_OPTIONS.findIndex(o => o.ticks === s.viewState.snapTicks);
-        const dir = e.deltaY > 0 ? 1 : -1;
-        const newIdx = Math.max(0, Math.min(SNAP_OPTIONS.length - 1, (curIdx === -1 ? 2 : curIdx) + dir));
-        s.setViewState({ snapTicks: SNAP_OPTIONS[newIdx].ticks });
-      } else if (e.ctrlKey) {
+        // Alt+wheel → cycle base values; beyond 1/1 repeat the sequence offset by N×1/1
+        // Sequence: ...1/2, 1/1, 1/1+1/32T, 1/1+1/32, ..., 1/1+1/1, 2×1/1+1/32T, ...
+        const cur = s.viewState.snapTicks;
+        const wholeNote = SNAP_ATOMS_ASC[SNAP_ATOMS_ASC.length - 1].ticks;
+        const base = cur % wholeNote || wholeNote; // current position within the cycle
+        const floor = cur - base; // N × wholeNote below
+        const idx = SNAP_ATOMS_ASC.findIndex(a => a.ticks === base);
+        if (e.deltaY > 0) {
+          // shorter
+          if (idx > 0) {
+            s.setViewState({ snapTicks: floor + SNAP_ATOMS_ASC[idx - 1].ticks });
+          } else if (floor > 0) {
+            // step down one whole-note tier: N×1/1 → (N-1)×1/1 + 1/1
+            s.setViewState({ snapTicks: floor });
+          }
+          // else already at minimum (1/32T)
+        } else {
+          // longer
+          if (idx >= 0 && idx < SNAP_ATOMS_ASC.length - 1) {
+            s.setViewState({ snapTicks: floor + SNAP_ATOMS_ASC[idx + 1].ticks });
+          } else {
+            // wrap into next tier: current tier's 1/1 → next tier's 1/32T
+            s.setViewState({ snapTicks: floor + wholeNote + SNAP_ATOMS_ASC[0].ticks });
+          }
+        }
+      } else if (e.ctrlKey && e.shiftKey) {
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-        s.setViewState({ pixelsPerTick: Math.max(0.05, Math.min(5, s.viewState.pixelsPerTick * factor)) });
-      } else {
-        const maxScrollY = Math.max(0, 128 * s.viewState.pixelsPerSemitone - (size.height - HEADER_H));
+        const newPPS = Math.max(6, Math.min(80, s.viewState.pixelsPerSemitone * factor));
+        const rect = canvas.getBoundingClientRect();
+        const mouseY = e.clientY - rect.top;
+        const midMidi = 127 - (s.viewState.scrollY + mouseY - HEADER_H) / s.viewState.pixelsPerSemitone;
+        const newScrollY = (127 - midMidi) * newPPS - (mouseY - HEADER_H);
+        const maxScrollY = Math.max(0, 128 * newPPS - (size.height - HEADER_H));
         s.setViewState({
-          scrollX: Math.max(0, s.viewState.scrollX + e.deltaX + (e.shiftKey ? e.deltaY : 0)),
-          scrollY: Math.min(maxScrollY, Math.max(0, s.viewState.scrollY + (e.shiftKey ? 0 : e.deltaY))),
+          pixelsPerSemitone: newPPS,
+          scrollY: Math.min(maxScrollY, Math.max(0, newScrollY)),
         });
+      } else if (e.ctrlKey) {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        if (mx < KEYBOARD_W) {
+          // Ctrl+wheel over keyboard → vertical zoom (pixelsPerSemitone)
+          const newPPS = Math.max(6, Math.min(80, s.viewState.pixelsPerSemitone * factor));
+          // Keep the mouse pitch row centered after zoom
+          const mouseY = e.clientY - rect.top;
+          const midMidi = 127 - (s.viewState.scrollY + mouseY - HEADER_H) / s.viewState.pixelsPerSemitone;
+          const newScrollY = (127 - midMidi) * newPPS - (mouseY - HEADER_H);
+          const maxScrollY = Math.max(0, 128 * newPPS - (size.height - HEADER_H));
+          s.setViewState({
+            pixelsPerSemitone: newPPS,
+            scrollY: Math.min(maxScrollY, Math.max(0, newScrollY)),
+          });
+        } else {
+          // Ctrl+wheel over canvas → horizontal zoom (pixelsPerTick)
+          s.setViewState({ pixelsPerTick: Math.max(0.05, Math.min(5, s.viewState.pixelsPerTick * factor)) });
+        }
+      } else if (tabHeld.current) {
+        // Tab+wheel → vertical zoom (pixelsPerSemitone) anywhere
+        const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+        const newPPS = Math.max(6, Math.min(80, s.viewState.pixelsPerSemitone * factor));
+        const rect = canvas.getBoundingClientRect();
+        const mouseY = e.clientY - rect.top;
+        const midMidi = 127 - (s.viewState.scrollY + mouseY - HEADER_H) / s.viewState.pixelsPerSemitone;
+        const newScrollY = (127 - midMidi) * newPPS - (mouseY - HEADER_H);
+        const maxScrollY = Math.max(0, 128 * newPPS - (size.height - HEADER_H));
+        s.setViewState({
+          pixelsPerSemitone: newPPS,
+          scrollY: Math.min(maxScrollY, Math.max(0, newScrollY)),
+        });
+      } else {
+        const ap = s.project.voice_parts[s.activePartIndex];
+        const hasNext = ap ? s.project.voice_parts.some(
+          vp => vp.track_no === ap.track_no && vp.position > ap.position
+        ) : false;
+        const minScrollX = ap ? ap.position * s.viewState.pixelsPerTick : 0;
+        const contentW = ap ? (ap.position + ap.duration) * s.viewState.pixelsPerTick : 0;
+        const viewportW = size.width - KEYBOARD_W;
+        const maxScrollX = hasNext ? Math.max(minScrollX, contentW - viewportW) : Infinity;
+        const clampX = (v: number) => Math.max(minScrollX, Math.min(maxScrollX, v));
+        if (e.shiftKey) {
+          s.setViewState({ scrollX: clampX(s.viewState.scrollX + (e.deltaX || e.deltaY)) });
+        } else {
+          const maxScrollY = Math.max(0, 128 * s.viewState.pixelsPerSemitone - (size.height - HEADER_H));
+          s.setViewState({
+            scrollX: clampX(s.viewState.scrollX + e.deltaX),
+            scrollY: Math.min(maxScrollY, Math.max(0, s.viewState.scrollY + e.deltaY)),
+          });
+        }
       }
     };
     canvas.addEventListener('wheel', handler, { passive: false });
     return () => canvas.removeEventListener('wheel', handler);
   }, [size.height]);
+
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Tab') { e.preventDefault(); tabHeld.current = true; } };
+    const up = (e: KeyboardEvent) => { if (e.key === 'Tab') tabHeld.current = false; };
+    window.addEventListener('keydown', down, true);
+    window.addEventListener('keyup', up, true);
+    return () => { window.removeEventListener('keydown', down, true); window.removeEventListener('keyup', up, true); };
+  }, []);
 
   const closeLyricEditor = useCallback(() => {
     lyricEditRef.current = false;

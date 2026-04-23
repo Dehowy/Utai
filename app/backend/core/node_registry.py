@@ -38,15 +38,16 @@ class NodeRegistry:
 
 
 def register_all_nodes():
-    """Import all node modules to trigger registration."""
-    import app.backend.nodes.audio_input  # noqa: F401
-    import app.backend.nodes.audio_output  # noqa: F401  (backward compat)
-    import app.backend.nodes.msst_separation  # noqa: F401
-    import app.backend.nodes.vr_separation  # noqa: F401
-    import app.backend.nodes.rvc_conversion  # noqa: F401
-    import app.backend.nodes.separation  # noqa: F401
-    import app.backend.nodes.ytdlp_download  # noqa: F401
-    import app.backend.nodes.video_output  # noqa: F401  (backward compat)
-    import app.backend.nodes.video_input  # noqa: F401
-    import app.backend.nodes.media_output  # noqa: F401
-    import app.backend.nodes.audio_merge  # noqa: F401
+    """Import all node modules to trigger registration. Missing deps are skipped."""
+    import logging
+    _log = logging.getLogger("utai.nodes")
+    _mods = [
+        'audio_input', 'audio_output', 'msst_separation', 'vr_separation',
+        'rvc_conversion', 'separation', 'ytdlp_download', 'video_output',
+        'video_input', 'media_output', 'audio_merge', 'effects',
+    ]
+    for mod in _mods:
+        try:
+            __import__(f'app.backend.nodes.{mod}')
+        except Exception as e:
+            _log.warning(f"Skipped node module {mod}: {e}")

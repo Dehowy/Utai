@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
 import { useWorkflowStore } from '../store/workflowStore'
+import { useAppStore } from '../store/appStore'
 import { useExecutionStore } from '../store/executionStore'
 import { stopExecution, cleanupTemp, cleanupBuffers } from '../api/client'
 import { LangSwitcher } from './LangSwitcher'
@@ -16,6 +17,7 @@ interface ToolbarProps {
 export function Toolbar({ onExecute, onOpenModelManager }: ToolbarProps) {
   const { t } = useTranslation()
   const isRunning = useExecutionStore((s) => s.isRunning)
+  const hasSynth = useAppStore(s => s.modules?.synth) !== false
   const executionId = useExecutionStore((s) => s.executionId)
   const { clearWorkflow } = useWorkflowStore()
   const [confirmClear, setConfirmClear] = useState(false)
@@ -94,9 +96,11 @@ export function Toolbar({ onExecute, onOpenModelManager }: ToolbarProps) {
 
       <div style={{ flex: 1 }} />
 
-      <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
-        {t('toolbar.synth')}
-      </Link>
+      {hasSynth && (
+        <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
+          {t('toolbar.synth')}
+        </Link>
+      )}
 
       <Link to="/train" className="utai-btn utai-btn--save" style={{ textDecoration: 'none' }}>
         {t('toolbar.training')}

@@ -1,5 +1,5 @@
 # PyTorch CPU only - no GPU acceleration
---index-url https://download.pytorch.org/whl/cpu
-torch==2.5.1
-torchaudio==2.5.1
-torchvision==0.20.1
+# --index-url is handled by the installer (avoids conflict with PyPI mirror settings)
+torch==2.5.1+cpu
+torchaudio==2.5.1+cpu
+torchvision==0.20.1+cpu

@@ -1,5 +1,6 @@
 """Application configuration."""
 
+import json
 import os
 from pathlib import Path
 
@@ -55,3 +56,42 @@ def get_device() -> str:
         except ImportError:
             return "cpu"
     return DEVICE
+
+
+# ── Mirror / proxy config ──
+
+CONFIG_DIR = PROJECT_ROOT / "config"
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+MIRRORS_FILE = CONFIG_DIR / "mirrors.json"
+
+_DEFAULT_MIRRORS = {
+    "pypi": "",
+    "github": "",
+    "huggingface": "",
+    "pytorch": "",
+}
+
+
+def get_mirrors() -> dict:
+    if MIRRORS_FILE.exists():
+        try:
+            return {**_DEFAULT_MIRRORS, **json.loads(MIRRORS_FILE.read_text(encoding="utf-8"))}
+        except Exception:
+            pass
+    return dict(_DEFAULT_MIRRORS)
+
+
+def set_mirrors(mirrors: dict) -> None:
+    MIRRORS_FILE.write_text(json.dumps(mirrors, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def rewrite_url(url: str) -> str:
+    """Rewrite a download URL using configured mirrors."""
+    mirrors = get_mirrors()
+    hf = mirrors.get("huggingface", "")
+    gh = mirrors.get("github", "")
+    if hf and "huggingface.co" in url:
+        url = url.replace("https://huggingface.co", hf.rstrip("/"))
+    if gh and "github.com" in url:
+        url = url.replace("https://github.com", gh.rstrip("/"))
+    return url

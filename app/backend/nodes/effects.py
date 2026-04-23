@@ -33,7 +33,7 @@ class EffectsNode(BaseNode):
             parameters=[
                 ParameterDefinition(
                     name="effects",
-                    param_type=ParameterType.TEXT,
+                    type=ParameterType.TEXT,
                     label="Effects Chain (JSON)",
                     default="[]",
                 ),

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Link } from 'react-router-dom'
+import { useAppStore } from '../store/appStore'
 import {
   ReactFlow,
   Background,
@@ -25,6 +26,7 @@ import { LangSwitcher } from '../components/LangSwitcher'
 import { ModelManager } from '../components/ModelManager'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { TrainingProjectMenu } from '../components/TrainingProjectMenu'
+import { ToastContainer } from '../components/Toast'
 import { startFullTraining, startBatchSeparation, connectTraining, stopTraining, cleanupTemp, cleanupBuffers, cleanupAllTrainingData } from '../api/client'
 
 const trainNodeTypes: NodeTypes = {
@@ -49,6 +51,7 @@ let trainNodeCounter = 0
 
 function TrainFlow() {
   const { t } = useTranslation()
+  const hasSynth = useAppStore(s => s.modules?.synth) !== false
   const {
     nodes, edges, onNodesChange, onEdgesChange, onConnect,
     addNode, removeNode, removeEdge,
@@ -451,6 +454,18 @@ function TrainFlow() {
     addLog('[execute-all] Pipeline finished')
   }, [nodes, edges, isRunningAll])
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (window.location.pathname !== '/train') return
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        import('../components/TrainingProjectMenu').then(m => m.saveTraining())
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [])
+
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
       {/* Toolbar */}
@@ -502,9 +517,11 @@ function TrainFlow() {
 
         <div style={{ flex: 1 }} />
 
-        <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
-          {t('toolbar.synth')}
-        </Link>
+        {hasSynth && (
+          <Link to="/synth" className="utai-btn utai-btn--synth" style={{ textDecoration: 'none' }}>
+            {t('toolbar.synth')}
+          </Link>
+        )}
 
         <Link to="/" className="utai-btn utai-btn--load" style={{ textDecoration: 'none' }}>
           {t('train.backToWorkflow')}
@@ -629,6 +646,7 @@ export default function TrainingPage() {
   return (
     <ReactFlowProvider>
       <TrainFlow />
+      <ToastContainer />
     </ReactFlowProvider>
   )
 }

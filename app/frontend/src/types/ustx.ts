@@ -67,6 +67,8 @@ export interface UVoicePart {
   duration: number;   // ticks
   notes: UNote[];
   curves: UCurve[];
+  volume?: number;    // clip-level dB (default 0)
+  pan?: number;       // clip-level pan -100..100 (default 0)
 }
 
 export interface UWavePart {
@@ -79,7 +81,10 @@ export interface UWavePart {
   trim: number;
   fadein: number;
   fadeout: number;
-  buffer_id?: string;  // backend audio buffer reference for imported audio
+  buffer_id?: string;
+  _fileTotalMs?: number; // original full file duration (for peaks slicing)
+  volume?: number;    // clip-level dB (default 0)
+  pan?: number;       // clip-level pan -100..100 (default 0)
 }
 
 export interface UInstrumentNote {
@@ -95,6 +100,8 @@ export interface UInstrumentPart {
   position: number;   // ticks from project start
   duration: number;   // ticks
   notes: UInstrumentNote[];
+  volume?: number;    // clip-level dB (default 0)
+  pan?: number;       // clip-level pan -100..100 (default 0)
 }
 
 export interface UTempo {
@@ -174,12 +181,13 @@ export function defaultVibrato(): UVibrato {
 }
 
 // Default pitch for new notes (must have at least 2 points when snap_first is true)
-export function defaultPitch(): UPitch {
+export function defaultPitch(durationMs?: number): UPitch {
+  const endMs = durationMs ?? 100;
   return {
     snap_first: true,
     data: [
-      { x: -40, y: 0, shape: 'io' as PitchPointShape },
-      { x: 40, y: 0, shape: 'io' as PitchPointShape },
+      { x: 0, y: 0, shape: 'io' as PitchPointShape },
+      { x: endMs, y: 0, shape: 'io' as PitchPointShape },
     ],
   };
 }

@@ -161,6 +161,8 @@ async def serve_video(filename: str):
     """Serve a video file from temp storage."""
     video_dir = TEMP_DIR / "video_output"
     file_path = video_dir / filename
+    if not file_path.resolve().is_relative_to(video_dir.resolve()):
+        raise HTTPException(403, "Access denied")
     if not file_path.exists():
         raise HTTPException(404, "Video not found")
     # Determine media type from extension
@@ -212,3 +214,69 @@ async def audio_peaks(buffer_id: str, width: int = 800):
         peaks.append(float(np.max(np.abs(chunk))))
 
     return {"buffer_id": buffer_id, "peaks": peaks, "width": len(peaks)}
+
+
+import logging
+from pydantic import BaseModel
+logger = logging.getLogger("utai.api.audio")
+
+
+class EffectSpec(BaseModel):
+    type: str
+    params: dict = {}
+    enabled: bool = True
+
+
+class ApplyEffectsRequest(BaseModel):
+    effects: list[EffectSpec]
+    volume_db: float = 0.0
+    pan: float = 0.0
+
+
+@router.post("/{buffer_id}/apply-effects")
+async def apply_buffer_effects(buffer_id: str, req: ApplyEffectsRequest):
+    """Apply effects + volume/pan to an audio buffer. Returns processed WAV as new buffer."""
+    audio = buffer_manager.get(buffer_id)
+    if audio is None:
+        raise HTTPException(status_code=404, detail="Audio buffer not found")
+
+    try:
+        samples = audio.samples.copy()
+        sr = audio.sample_rate
+
+        if samples.ndim == 1:
+            samples = samples[np.newaxis, :]
+
+        enabled_fx = [e.model_dump() for e in req.effects if e.enabled]
+        if enabled_fx:
+            from app.backend.wrappers.effects_wrapper import apply_effects_to_buffer
+            samples = apply_effects_to_buffer(samples, enabled_fx, sr)
+
+        # Volume (dB → linear)
+        if req.volume_db <= -24:
+            samples = np.zeros_like(samples)
+        elif req.volume_db != 0:
+            samples = samples * (10 ** (req.volume_db / 20))
+
+        # Pan (simple stereo panning)
+        if req.pan != 0 and samples.shape[0] >= 1:
+            if samples.shape[0] == 1:
+                samples = np.vstack([samples, samples])
+            pan_norm = max(-1.0, min(1.0, req.pan / 100))
+            l_gain = min(1.0, 1.0 - pan_norm)
+            r_gain = min(1.0, 1.0 + pan_norm)
+            samples[0] *= l_gain
+            samples[1] *= r_gain
+
+        # Convert from (channels, num_samples) back to soundfile layout
+        if samples.shape[0] == 1:
+            out_samples = samples[0]            # mono: (num_samples,)
+        else:
+            out_samples = samples.T             # stereo: (num_samples, channels)
+        out = AudioData(samples=out_samples.astype(np.float32), sample_rate=sr, name=f"{buffer_id}_fx")
+        new_id = buffer_manager.store(out)
+
+        return {"buffer_id": new_id, "sample_rate": sr, "duration": samples.shape[-1] / sr}
+    except Exception as e:
+        logger.exception("Effects processing failed")
+        raise HTTPException(status_code=500, detail=str(e))

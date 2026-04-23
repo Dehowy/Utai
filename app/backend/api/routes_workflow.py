@@ -384,8 +384,15 @@ async def import_workflow_from_path(body: dict):
     p = Path(file_path)
     if not p.exists():
         raise HTTPException(404, f"File not found: {file_path}")
-    if p.suffix.lower() not in (".utai", ".utaitr"):
-        raise HTTPException(400, "File must have .utai or .utaiTr extension")
+    if p.suffix.lower() not in (".utai", ".utaitr", ".utaisynth"):
+        raise HTTPException(400, "Unsupported file extension")
+
+    if p.suffix.lower() == ".utaisynth":
+        from app.backend.api.routes_synth import _unpack_synth_project
+        result = _unpack_synth_project(p.read_bytes())
+        result["project_type"] = "synth"
+        result["path"] = file_path
+        return result
 
     try:
         data = _utai_bytes_to_workflow(p.read_bytes())
@@ -431,7 +438,7 @@ async def import_workflow_dialog():
             root.attributes("-topmost", True)
             path = filedialog.askopenfilename(
                 title="Import Project",
-                filetypes=[("utai project", "*.utai;*.utaiTr"), ("All files", "*.*")],
+                filetypes=[("utai project", "*.utai;*.utaiTr;*.utaiSynth"), ("All files", "*.*")],
             )
             root.destroy()
             return path or ""
@@ -447,6 +454,14 @@ async def import_workflow_dialog():
     p = Path(file_path)
     if not p.exists():
         raise HTTPException(404, "File not found")
+
+    # Route .utaiSynth to synth project handler
+    if p.suffix.lower() == ".utaisynth":
+        from app.backend.api.routes_synth import _unpack_synth_project
+        result = _unpack_synth_project(p.read_bytes())
+        result["project_type"] = "synth"
+        result["path"] = file_path
+        return result
 
     try:
         data = _utai_bytes_to_workflow(p.read_bytes())

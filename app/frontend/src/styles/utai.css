@@ -5,6 +5,15 @@
 /* --- Google Fonts (pixel/retro feel) --- */
 @import url('https://fonts.googleapis.com/css2?family=DotGothic16&family=VT323&family=Noto+Sans+JP:wght@400;700&display=swap');
 
+*, *::before, *::after {
+  font-variant-emoji: text;
+}
+
+button:focus, button:focus-visible,
+[role="button"]:focus, a:focus {
+  outline: none;
+}
+
 :root {
   /* Base colors */
   --bg-deep: #08080f;
@@ -27,6 +36,7 @@
   /* Text */
   --text-primary: #d0d0dc;
   --text-secondary: #8888a0;
+  --text-dim: #666680;
   --text-muted: #555570;
   --text-bright: #f0f0ff;
 
@@ -192,6 +202,11 @@ body {
   92% { opacity: 1; }
   93% { opacity: 0.8; }
   94% { opacity: 1; }
+}
+
+@keyframes utai-toast-in {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 /* --- Toolbar --- */
@@ -2081,6 +2096,8 @@ input[type="checkbox"]:focus {
   overflow-y: auto;
   background: var(--bg-panel);
   min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
 }
 
 .utai-synth-section {

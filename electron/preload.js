@@ -1,5 +1,11 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
+// Ack close-requested immediately so main knows the renderer process is alive.
+// This runs before React mounts, giving the app more time to show its dialog.
+ipcRenderer.on('close-requested', () => {
+  ipcRenderer.send('close-ack')
+})
+
 contextBridge.exposeInMainWorld('electronAPI', {
   isElectron: true,
 
@@ -22,5 +28,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sendCloseAction: (action) => {
     ipcRenderer.send('close-action', action)
+  },
+
+  onForceAutosave: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on('force-autosave', handler)
+    return () => ipcRenderer.removeListener('force-autosave', handler)
   },
 })

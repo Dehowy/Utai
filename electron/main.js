@@ -22,20 +22,31 @@ let pythonProcess = null
 let backendPort = 8765
 let pendingUtaiFile = null // .utai path queued before renderer is ready
 let tray = null
+let closeFallbackTimer = null
 app.isQuitting = false
 
 // ── Path helpers ──
 
 function getResourcePath() {
   if (app.isPackaged) {
-    return process.resourcesPath
+    // In packaged mode, resourcesPath = <install>/resources
+    // But app files (python/, app/, synth/) are at <install>/ (parent)
+    return path.join(process.resourcesPath, '..')
   }
   return path.join(__dirname, '..')
 }
 
 function getPythonPath() {
   const resPath = getResourcePath()
-  return path.join(resPath, 'venv', 'Scripts', 'pythonw.exe')
+  const fs = require('fs')
+  // Dev: venv, Installed: python/  (prefer pythonw for windowsHide)
+  for (const p of ['venv/Scripts/pythonw.exe', 'python/pythonw.exe', 'venv/Scripts/python.exe', 'python/python.exe']) {
+    const full = path.join(resPath, p)
+    if (fs.existsSync(full)) { console.log(`[utai] Python found: ${full}`); return full }
+  }
+  const fallback = path.join(resPath, 'python', 'python.exe')
+  console.error(`[utai] WARNING: No Python found in ${resPath}, using fallback: ${fallback}`)
+  return fallback
 }
 
 // ── Port management ──
@@ -68,13 +79,15 @@ function startBackend(port) {
   const envPath = process.env.PATH || ''
   const newPath = binDir + path.delimiter + envPath
 
+  const pythonDir = path.join(resPath, 'python')
+  const sitePackages = path.join(pythonDir, 'Lib', 'site-packages')
+
   const env = {
     ...process.env,
-    PATH: newPath,
+    PATH: [binDir, pythonDir, path.join(pythonDir, 'Scripts'), newPath].join(path.delimiter),
     PORT: String(port),
     HOST: '127.0.0.1',
-    PYTHONPATH: resPath,
-    VIRTUAL_ENV: path.join(resPath, 'venv'),
+    PYTHONPATH: [resPath, sitePackages].join(path.delimiter),
     PYTHONUNBUFFERED: '1',
   }
 
@@ -105,8 +118,12 @@ function startBackend(port) {
   })
   pythonProcess.stdout.on('error', () => {})
 
+  let lastStderr = []
   pythonProcess.stderr.on('data', (data) => {
-    try { console.log(`[backend] ${data.toString().trim()}`) } catch {}
+    const line = data.toString().trim()
+    try { console.log(`[backend] ${line}`) } catch {}
+    lastStderr.push(line)
+    if (lastStderr.length > 20) lastStderr.shift()
   })
   pythonProcess.stderr.on('error', () => {})
 
@@ -114,7 +131,8 @@ function startBackend(port) {
     const wasExpected = pythonProcess === null || app.isQuitting
     pythonProcess = null
     if (!wasExpected && mainWindow && !mainWindow.isDestroyed()) {
-      dialog.showErrorBox('Utai', `Backend process exited unexpectedly (code ${code}).`)
+      const errDetail = lastStderr.join('\n')
+      dialog.showErrorBox('Utai', `Backend exited (code ${code}).\n\n${errDetail}`)
       app.quit()
     }
   })
@@ -131,25 +149,43 @@ function startBackend(port) {
 function waitForBackend(port, timeoutMs = 60000) {
   const startTime = Date.now()
   return new Promise((resolve, reject) => {
-    function check() {
+    function checkApi() {
       if (Date.now() - startTime > timeoutMs) {
         reject(new Error('Backend startup timed out'))
         return
       }
       const req = http.get(`http://127.0.0.1:${port}/api/system/info`, (res) => {
         if (res.statusCode === 200) {
-          resolve()
+          checkRoot()
         } else {
-          setTimeout(check, 500)
+          setTimeout(checkApi, 500)
         }
       })
-      req.on('error', () => setTimeout(check, 500))
-      req.setTimeout(2000, () => {
-        req.destroy()
-        setTimeout(check, 500)
-      })
+      req.on('error', () => setTimeout(checkApi, 500))
+      req.setTimeout(2000, () => { req.destroy(); setTimeout(checkApi, 500) })
     }
-    check()
+    function checkRoot() {
+      if (Date.now() - startTime > timeoutMs) {
+        console.warn('[utai] Timed out waiting for root page — loading anyway')
+        resolve()
+        return
+      }
+      const req = http.get(`http://127.0.0.1:${port}/`, (res) => {
+        let body = ''
+        res.on('data', d => { body += d.toString().slice(0, 200) })
+        res.on('end', () => {
+          if (res.statusCode === 200 && body.includes('<!DOCTYPE')) {
+            resolve()
+          } else {
+            console.log(`[utai] Root: status=${res.statusCode} html=${body.includes('<!DOCTYPE')}`)
+            setTimeout(checkRoot, 500)
+          }
+        })
+      })
+      req.on('error', () => setTimeout(checkRoot, 500))
+      req.setTimeout(2000, () => { req.destroy(); setTimeout(checkRoot, 500) })
+    }
+    checkApi()
   })
 }
 
@@ -176,6 +212,15 @@ function createWindow() {
   // Remove the application menu entirely (no File/Edit/View/Window/Help)
   mainWindow.setMenu(null)
 
+  // Block Chromium-level shortcuts that bypass JavaScript preventDefault
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return
+    const k = input.key.toLowerCase()
+    if ((input.control || input.meta) && ['r', 'w', 'n'].includes(k)) {
+      event.preventDefault()
+    }
+  })
+
   // Disable HTTP cache so CSS/JS updates take effect immediately
   mainWindow.webContents.session.clearCache()
 
@@ -198,12 +243,17 @@ function createWindow() {
     mainWindow.show()
   })
 
-  // Intercept close to show minimize-to-tray / quit dialog
+  // Intercept close — ask renderer for minimize-to-tray / quit dialog.
+  // If renderer can't respond (React failed to load), fall back to native dialog.
   mainWindow.on('close', (event) => {
     if (app.isQuitting) return
     event.preventDefault()
     if (mainWindow && mainWindow.webContents) {
       mainWindow.webContents.send('close-requested', { fromTray: false })
+      if (closeFallbackTimer) clearTimeout(closeFallbackTimer)
+      closeFallbackTimer = setTimeout(() => {
+        nativeFallbackQuit()
+      }, 2000)
     }
   })
 
@@ -266,6 +316,7 @@ ipcMain.handle('get-backend-port', () => backendPort)
 
 // Close / minimize-to-tray IPC
 ipcMain.on('close-action', (_event, action) => {
+  if (closeFallbackTimer) { clearTimeout(closeFallbackTimer); closeFallbackTimer = null }
   if (action === 'minimize') {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.hide()
@@ -275,6 +326,17 @@ ipcMain.on('close-action', (_event, action) => {
     app.quit()
   }
   // 'cancel' → do nothing
+})
+
+// Renderer ack — preload.js sends this immediately on close-requested,
+// before React mounts.  Extend the fallback timer to give React time to load.
+ipcMain.on('close-ack', () => {
+  if (!closeFallbackTimer) return
+  clearTimeout(closeFallbackTimer)
+  closeFallbackTimer = setTimeout(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) return
+    nativeFallbackQuit()
+  }, 12000)
 })
 
 // ── App lifecycle ──
@@ -312,6 +374,11 @@ app.whenReady().then(async () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
           mainWindow.show()
           mainWindow.webContents.send('close-requested', { fromTray: true })
+          if (closeFallbackTimer) clearTimeout(closeFallbackTimer)
+          closeFallbackTimer = setTimeout(() => {
+            app.isQuitting = true
+            app.quit()
+          }, 2000)
         } else {
           app.isQuitting = true
           app.quit()
@@ -338,6 +405,10 @@ app.whenReady().then(async () => {
 
     console.log('[utai] Backend is ready')
     mainWindow.loadURL(`http://127.0.0.1:${backendPort}`)
+
+    if (!app.isPackaged) {
+      mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
 
     mainWindow.webContents.on('did-finish-load', () => {
       // Send any pending .utai file to the renderer
@@ -368,6 +439,28 @@ app.on('before-quit', () => {
   app.isQuitting = true
   killBackend()
 })
+
+function nativeFallbackQuit() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  const choice = dialog.showMessageBoxSync(mainWindow, {
+    type: 'question',
+    buttons: ['Quit', 'Cancel'],
+    defaultId: 0,
+    title: 'Utai',
+    message: 'Quit Utai?',
+  })
+  if (choice === 0) {
+    // Try to trigger autosave via the renderer before quitting.
+    // Send force-autosave and give React 1.5s to flush.
+    if (mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('force-autosave')
+    }
+    setTimeout(() => {
+      app.isQuitting = true
+      app.quit()
+    }, 1500)
+  }
+}
 
 function killBackend() {
   if (pythonProcess) {

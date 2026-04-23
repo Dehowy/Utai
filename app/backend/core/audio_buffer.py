@@ -41,11 +41,11 @@ class AudioBufferManager:
         self._metadata: dict[str, dict] = {}  # buffer_id -> {path, sample_rate, name}
         BUFFER_DIR.mkdir(parents=True, exist_ok=True)
 
-    def store(self, audio: AudioData) -> str:
+    def store(self, audio: AudioData, force_id: str | None = None) -> str:
         """Store audio data to disk, return buffer ID. Memory is released immediately."""
         import soundfile as sf
 
-        buffer_id = uuid.uuid4().hex[:12]
+        buffer_id = force_id or uuid.uuid4().hex[:12]
         BUFFER_DIR.mkdir(parents=True, exist_ok=True)
         wav_path = BUFFER_DIR / f"{buffer_id}.wav"
 

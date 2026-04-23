@@ -14,8 +14,14 @@ interface WorkflowState {
   nodes: Node[]
   edges: Edge[]
   workflowName: string
+  dirty: boolean
+  projectPath: string | null
+  isSaving: boolean
 
   // Actions
+  markClean: () => void
+  setProjectPath: (path: string | null) => void
+  setIsSaving: (saving: boolean) => void
   onNodesChange: (changes: NodeChange[]) => void
   onEdgesChange: (changes: EdgeChange[]) => void
   onConnect: (connection: Connection) => void
@@ -41,12 +47,19 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
   nodes: DEFAULT_NODES,
   edges: [],
   workflowName: 'Untitled',
+  dirty: false,
+  projectPath: null,
+  isSaving: false,
+
+  markClean: () => set({ dirty: false }),
+  setProjectPath: (path) => set({ projectPath: path }),
+  setIsSaving: (saving) => set({ isSaving: saving }),
 
   onNodesChange: (changes) =>
-    set({ nodes: applyNodeChanges(changes, get().nodes) }),
+    set({ nodes: applyNodeChanges(changes, get().nodes), dirty: true }),
 
   onEdgesChange: (changes) =>
-    set({ edges: applyEdgeChanges(changes, get().edges) }),
+    set({ edges: applyEdgeChanges(changes, get().edges), dirty: true }),
 
   onConnect: (connection) => {
     // Enforce single-connection per input port: remove any existing edge
@@ -54,37 +67,41 @@ export const useWorkflowStore = create<WorkflowState>((set, get) => ({
     const filtered = get().edges.filter(
       (e) => !(e.target === connection.target && e.targetHandle === connection.targetHandle),
     )
-    set({ edges: addEdge({ ...connection, type: 'smoothstep', animated: true }, filtered) })
+    set({ edges: addEdge({ ...connection, type: 'smoothstep', animated: true }, filtered), dirty: true })
   },
 
   addNode: (node) =>
-    set({ nodes: [...get().nodes, node] }),
+    set({ nodes: [...get().nodes, node], dirty: true }),
 
   removeNode: (id) =>
     set({
       nodes: get().nodes.filter((n) => n.id !== id),
       edges: get().edges.filter((e) => e.source !== id && e.target !== id),
+      dirty: true,
     }),
 
   removeEdge: (id) =>
-    set({ edges: get().edges.filter((e) => e.id !== id) }),
+    set({ edges: get().edges.filter((e) => e.id !== id), dirty: true }),
 
   removeEdgesFromSource: (edgeIds) =>
-    set({ edges: get().edges.filter((e) => !edgeIds.includes(e.id)) }),
+    set({ edges: get().edges.filter((e) => !edgeIds.includes(e.id)), dirty: true }),
 
   updateNodeData: (id, data) =>
     set({
       nodes: get().nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, ...data } } : n,
       ),
+      dirty: true,
     }),
 
   setWorkflow: (name, nodes, edges) =>
-    set({ workflowName: name, nodes, edges }),
+    set({ workflowName: name, nodes, edges, dirty: false, projectPath: null }),
 
   clearWorkflow: () => set({
     nodes: [{ ...DEFAULT_NODES[0], data: { params: {} } }],
     edges: [],
     workflowName: 'Untitled',
+    dirty: false,
+    projectPath: null,
   }),
 }))

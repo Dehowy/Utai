@@ -3,7 +3,6 @@ import { useTranslation } from 'react-i18next';
 interface G2pWord { phonemes: string; }
 
 const G2P_LANGS = [
-  { code: 'en', label: 'EN' },
   { code: 'zh', label: 'ZH' },
   { code: 'ja', label: 'JA' },
 ];
@@ -12,7 +11,7 @@ export default function G2pTool() {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [text, setText] = useState('');
-  const [lang, setLang] = useState('en');
+  const [lang, setLang] = useState('zh');
   const [words, setWords] = useState<G2pWord[]>([]);
   const [loading, setLoading] = useState(false);
 

@@ -32,7 +32,10 @@ export interface RenderContext {
   hoverMidi: number | null;
   playheadTicks?: number;
   hoverPlayhead?: boolean;
-  instrumentPart?: UInstrumentPart | null;  // if set, render instrument notes instead of voice notes
+  instrumentPart?: UInstrumentPart | null;
+  partEndTick?: number;
+  pitchToolActive?: boolean;
+  hoverPitchPoint?: { noteIndex: number; pointIndex: number } | null;
 }
 
 /** Main render function — call on every frame. */
@@ -46,9 +49,11 @@ export function renderPianoRoll(rc: RenderContext) {
   drawGrid(rc);
   drawHoverRow(rc);
   drawNotes(rc);
+  drawPitchCurves(rc);
+  drawPartBoundary(rc);
   drawKeyboard(rc);
   drawHeader(rc);
-  drawPlayhead(rc); // after header so triangle is visible on the ruler
+  drawPlayhead(rc);
 }
 
 function drawPlayhead(rc: RenderContext) {
@@ -167,6 +172,226 @@ function drawHoverRow(rc: RenderContext) {
   ctx.fillRect(0, y, KEYBOARD_WIDTH, pixelsPerSemitone);
 }
 
+const NOTE_VALUE_TABLE: [number, string][] = [
+  [RESOLUTION * 4, '1/1'],
+  [RESOLUTION * 2, '1/2'],
+  [RESOLUTION,     '1/4'],
+  [RESOLUTION / 2, '1/8'],
+  [RESOLUTION / 4, '1/16'],
+  [RESOLUTION / 8, '1/32'],
+  [Math.round(RESOLUTION * 4 / 3), '1/2T'],
+  [Math.round(RESOLUTION * 2 / 3), '1/4T'],
+  [Math.round(RESOLUTION / 3),     '1/8T'],
+  [Math.round(RESOLUTION / 6),     '1/16T'],
+  [Math.round(RESOLUTION / 12),    '1/32T'],
+];
+
+export function ticksToDurationLabel(ticks: number, snapTicks?: number): string {
+  // Find the largest note value that fits
+  const sorted = [...NOTE_VALUE_TABLE].sort((a, b) => b[0] - a[0]);
+  let remaining = ticks;
+  const parts: string[] = [];
+
+  for (const [val, label] of sorted) {
+    if (remaining >= val) {
+      const count = Math.floor(remaining / val);
+      parts.push(count > 1 ? `${count}×${label}` : label);
+      remaining -= count * val;
+    }
+    if (remaining <= 0) break;
+  }
+
+  if (remaining > 0 && parts.length > 0) {
+    parts.push(`+${remaining}t`);
+  }
+
+  return parts.length > 0 ? parts.join('+') : `${ticks}t`;
+}
+
+function interpolatePitchY(points: { x: number; y: number; shape: string }[], t: number): number {
+  if (points.length === 0) return 0;
+  if (t <= points[0].x) return points[0].y;
+  if (t >= points[points.length - 1].x) return points[points.length - 1].y;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i], p1 = points[i + 1];
+    if (p0.x <= t && t <= p1.x) {
+      const span = p1.x - p0.x;
+      let frac = span > 0 ? (t - p0.x) / span : 0;
+      const shape = p0.shape || 'io';
+      if (shape === 'io') frac = 0.5 - 0.5 * Math.cos(frac * Math.PI);
+      else if (shape === 'i') frac = 1 - Math.cos(frac * Math.PI / 2);
+      else if (shape === 'o') frac = Math.sin(frac * Math.PI / 2);
+      else if (shape === 'sp') frac = 0;
+      return p0.y + (p1.y - p0.y) * frac;
+    }
+  }
+  return 0;
+}
+
+function drawPitchCurves(rc: RenderContext) {
+  const { ctx, width, height, project, viewState, activePartIndex } = rc;
+  const { scrollX, scrollY, pixelsPerTick, pixelsPerSemitone } = viewState;
+  if (rc.instrumentPart) return;
+
+  const part = project.voice_parts[activePartIndex];
+  if (!part) return;
+
+  const startTick = Math.floor(scrollX / pixelsPerTick);
+  const endTick = Math.ceil((scrollX + width - KEYBOARD_WIDTH) / pixelsPerTick);
+
+  ctx.save();
+
+  const bpm = project.tempos[0]?.bpm ?? 120;
+  const ticksPerSec = (bpm * RESOLUTION) / 60;
+  const isHoveringCurve = rc.hoverPitchPoint;
+
+  for (let ni = 0; ni < part.notes.length; ni++) {
+    const note = part.notes[ni];
+    const absTick = part.position + note.position;
+    const absEnd = absTick + note.duration;
+    if (absEnd < startTick || absTick > endTick) continue;
+
+    const pitchData = note.pitch?.data;
+    const x0 = KEYBOARD_WIDTH + absTick * pixelsPerTick - scrollX;
+    const xEnd = KEYBOARD_WIDTH + absEnd * pixelsPerTick - scrollX;
+    const noteBaseY = HEADER_HEIGHT + (127 - note.tone) * pixelsPerSemitone - scrollY;
+    const noteDurMs = (note.duration / ticksPerSec) * 1000;
+    if (noteDurMs <= 0) continue;
+    const basePitchY = noteBaseY + pixelsPerSemitone / 2;
+
+    // Base pitch line (MIDI note center) — dashed in pitch mode, solid otherwise
+    if (rc.pitchToolActive || (pitchData && pitchData.length > 0)) {
+      ctx.strokeStyle = '#aaaacc';
+      ctx.lineWidth = 1;
+      ctx.globalAlpha = rc.pitchToolActive ? 0.6 : 0.3;
+      if (rc.pitchToolActive) ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(Math.max(x0, KEYBOARD_WIDTH), basePitchY);
+      ctx.lineTo(Math.min(xEnd, width), basePitchY);
+      ctx.stroke();
+      if (rc.pitchToolActive) ctx.setLineDash([]);
+    }
+
+    if (!pitchData || pitchData.length === 0) continue;
+
+    const noteHovered = isHoveringCurve?.noteIndex === ni;
+    const isPitchMode = rc.pitchToolActive;
+
+    // Line width scales slightly with vertical zoom (clamp 1.5–3.5)
+    const baseWidth = Math.max(1.5, Math.min(3.5, pixelsPerSemitone / 10));
+    ctx.strokeStyle = noteHovered && isPitchMode ? '#8fffd0' : '#5deba5';
+    ctx.lineWidth = noteHovered && isPitchMode ? baseWidth + 1 : baseWidth;
+    ctx.globalAlpha = isPitchMode ? (noteHovered ? 1.0 : 0.8) : 0.2;
+    ctx.beginPath();
+    let first = true;
+    for (let px = Math.max(x0, KEYBOARD_WIDTH); px <= Math.min(xEnd, width); px += 2) {
+      const frac = (px - x0) / (xEnd - x0);
+      const ms = frac * noteDurMs;
+      const yDev = interpolatePitchY(pitchData, ms);
+      const screenY = basePitchY - (yDev / 10) * pixelsPerSemitone;
+      if (first) { ctx.moveTo(px, screenY); first = false; }
+      else ctx.lineTo(px, screenY);
+    }
+    ctx.stroke();
+
+    // Draw control points
+    ctx.globalAlpha = isPitchMode ? 1 : 0.2;
+    for (let pi = 0; pi < pitchData.length; pi++) {
+      const pt = pitchData[pi];
+      const ptFrac = pt.x / noteDurMs;
+      const ptX = x0 + ptFrac * (xEnd - x0);
+      if (ptX < KEYBOARD_WIDTH || ptX > width) continue;
+      const ptY = basePitchY - (pt.y / 10) * pixelsPerSemitone;
+      const isHovered = rc.hoverPitchPoint?.noteIndex === ni && rc.hoverPitchPoint?.pointIndex === pi;
+      ctx.fillStyle = isHovered ? '#ffffff' : '#5deba5';
+      ctx.beginPath();
+      ctx.arc(ptX, ptY, isHovered ? 5 : 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+export interface PitchHitResult {
+  partIndex: number; noteIndex: number; pointIndex: number;
+  noteX0: number; noteXEnd: number; noteDurMs: number; baseMidi: number;
+}
+
+/** Hit test for pitch control points OR pitch curve line. pointIndex = -1 means on the curve but no point. */
+export function hitTestPitchPoint(
+  x: number, y: number, project: UProject, viewState: ViewState, activePartIndex: number,
+): PitchHitResult | null {
+  const { scrollX, scrollY, pixelsPerTick, pixelsPerSemitone } = viewState;
+  const part = project.voice_parts[activePartIndex];
+  if (!part) return null;
+
+  const bpm = project.tempos[0]?.bpm ?? 120;
+  const ticksPerSec = (bpm * RESOLUTION) / 60;
+  const hitRadius = 12;
+
+  for (let ni = 0; ni < part.notes.length; ni++) {
+    const note = part.notes[ni];
+    const pitchData = note.pitch?.data;
+    if (!pitchData || pitchData.length === 0) continue;
+
+    const absTick = part.position + note.position;
+    const absEnd = absTick + note.duration;
+    const x0 = KEYBOARD_WIDTH + absTick * pixelsPerTick - scrollX;
+    const xEnd = KEYBOARD_WIDTH + absEnd * pixelsPerTick - scrollX;
+    const noteBaseY = HEADER_HEIGHT + (127 - note.tone) * pixelsPerSemitone - scrollY;
+    const noteDurMs = (note.duration / ticksPerSec) * 1000;
+    if (noteDurMs <= 0) continue;
+
+    // Check control points first (priority)
+    for (let pi = 0; pi < pitchData.length; pi++) {
+      const pt = pitchData[pi];
+      const ptFrac = pt.x / noteDurMs;
+      const ptX = x0 + ptFrac * (xEnd - x0);
+      const ptY = noteBaseY + pixelsPerSemitone / 2 - (pt.y / 10) * pixelsPerSemitone;
+      if (Math.abs(x - ptX) < hitRadius && Math.abs(y - ptY) < hitRadius) {
+        return { partIndex: activePartIndex, noteIndex: ni, pointIndex: pi, noteX0: x0, noteXEnd: xEnd, noteDurMs, baseMidi: note.tone };
+      }
+    }
+
+    // Check curve line proximity (pointIndex = -1)
+    if (x >= x0 && x <= xEnd) {
+      const frac = (x - x0) / (xEnd - x0);
+      const ms = frac * noteDurMs;
+      const yDev = interpolatePitchY(pitchData, ms);
+      const curveY = noteBaseY + pixelsPerSemitone / 2 - (yDev / 10) * pixelsPerSemitone;
+      if (Math.abs(y - curveY) < hitRadius) {
+        return { partIndex: activePartIndex, noteIndex: ni, pointIndex: -1, noteX0: x0, noteXEnd: xEnd, noteDurMs, baseMidi: note.tone };
+      }
+    }
+  }
+  return null;
+}
+
+function drawPartBoundary(rc: RenderContext) {
+  if (rc.partEndTick == null) return;
+  const { ctx, height, viewState } = rc;
+  const x = KEYBOARD_WIDTH + rc.partEndTick * viewState.pixelsPerTick - viewState.scrollX;
+  if (x < KEYBOARD_WIDTH || x > rc.width) return;
+
+  // Dim overlay beyond boundary
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.fillRect(x, HEADER_HEIGHT, rc.width - x, height - HEADER_HEIGHT);
+
+  // Boundary line
+  ctx.save();
+  ctx.strokeStyle = '#ff6b9d';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(x, HEADER_HEIGHT);
+  ctx.lineTo(x, height);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.restore();
+}
+
 function drawNotes(rc: RenderContext) {
   const { ctx, width, height, project, viewState, selectedNotes, activePartIndex } = rc;
   const { scrollX, scrollY, pixelsPerTick, pixelsPerSemitone } = viewState;
@@ -219,6 +444,17 @@ function drawNotes(rc: RenderContext) {
         ctx.font = `${Math.min(12, h - 4)}px 'DotGothic16', sans-serif`;
         ctx.textBaseline = 'middle';
         ctx.fillText(note.lyric, x + 3, y + h / 2, w - 6);
+      }
+
+      // Duration label — show when note is longer than snap
+      if (note.duration > viewState.snapTicks && w > 40 && h > 8) {
+        const label = ticksToDurationLabel(note.duration, viewState.snapTicks);
+        ctx.fillStyle = 'rgba(200, 200, 220, 0.5)';
+        ctx.font = `${Math.min(9, h - 6)}px 'DotGothic16', sans-serif`;
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, x + w - 3, y + h / 2);
+        ctx.textAlign = 'left';
       }
     });
   });

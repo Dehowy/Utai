@@ -42,6 +42,7 @@ class TrainingTask:
         self.logs: list[str] = []
         self._process: subprocess.Popen | None = None
         self._cancelled = False
+        self._pending_msgs: list[dict] = []
 
     def cancel(self):
         self._cancelled = True
@@ -333,8 +334,7 @@ class RVCTrainWrapper:
             f0_path = f0_dir / f"{name}.wav.npy"
             f0nsf_path = f0nsf_dir / f"{name}.wav.npy"
 
-            if gt_path.exists():
-                # Format: gt_wav_path|feature_path|f0_path|f0nsf_path|speaker_id
+            if gt_path.exists() and f0_path.exists() and f0nsf_path.exists():
                 line = f"{gt_path.as_posix()}|{feat_file.as_posix()}|{f0_path.as_posix()}|{f0nsf_path.as_posix()}|0"
                 lines.append(line)
 
@@ -532,6 +532,10 @@ class RVCTrainWrapper:
             # Save index
             index_path = exp_dir / f"added_IVF{n_ivf}_Flat_nprobe_1_{exp_name}_{version}.index"
             faiss.write_index(index, str(index_path))
+
+            # Free large arrays
+            del big_npy
+            import gc; gc.collect()
 
             if log_callback:
                 await log_callback(f"[index] Index saved: {index_path}")

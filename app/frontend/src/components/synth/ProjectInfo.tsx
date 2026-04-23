@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 
@@ -11,6 +12,15 @@ export default function ProjectInfo() {
   const ts = project.time_signatures[0];
   const beatPerBar = ts?.beat_per_bar ?? 4;
   const beatUnit = ts?.beat_unit ?? 4;
+  const [editBpm, setEditBpm] = useState<string | null>(null);
+
+  const commitBpm = () => {
+    if (editBpm !== null) {
+      const v = parseInt(editBpm, 10);
+      if (!isNaN(v) && v >= 20 && v <= 300) setTempo(v);
+      setEditBpm(null);
+    }
+  };
 
   return (
     <div className="utai-synth-section" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -19,10 +29,13 @@ export default function ProjectInfo() {
         <input
           type="text"
           inputMode="numeric"
-          value={bpm}
-          onChange={e => {
-            const v = parseInt(e.target.value, 10);
-            if (!isNaN(v) && v >= 20 && v <= 300) setTempo(v);
+          value={editBpm !== null ? editBpm : bpm}
+          onFocus={() => setEditBpm(String(bpm))}
+          onChange={e => setEditBpm(e.target.value.replace(/[^0-9]/g, ''))}
+          onBlur={commitBpm}
+          onKeyDown={e => {
+            if (e.key === 'Enter') { commitBpm(); (e.target as HTMLInputElement).blur(); }
+            else if (e.key === 'Escape') { setEditBpm(null); (e.target as HTMLInputElement).blur(); }
           }}
           className="utai-synth-no-spin"
           style={{ width: 45, textAlign: 'center' }}

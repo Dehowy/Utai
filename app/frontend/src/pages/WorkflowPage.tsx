@@ -1,4 +1,4 @@
-import { useCallback, useState, type DragEvent } from 'react'
+import { useCallback, useState, useEffect, type DragEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ReactFlow,
@@ -15,6 +15,7 @@ import '@xyflow/react/dist/style.css'
 import { useWorkflowStore } from '../store/workflowStore'
 import { useExecutionStore } from '../store/executionStore'
 import { Toolbar } from '../components/Toolbar'
+import { ToastContainer } from '../components/Toast'
 import { NodePalette } from '../components/NodePalette'
 import { ContextMenu } from '../components/ContextMenu'
 import { AudioInputNode } from '../nodes/AudioInputNode'
@@ -477,6 +478,18 @@ function Flow() {
     setContextMenu(null)
   }, [])
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (window.location.pathname !== '/') return
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault()
+        import('../components/ProjectMenu').then(m => m.saveWorkflow())
+      }
+    }
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [])
+
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
       <Toolbar
@@ -549,6 +562,7 @@ export default function WorkflowPage() {
   return (
     <ReactFlowProvider>
       <Flow />
+      <ToastContainer />
     </ReactFlowProvider>
   )
 }

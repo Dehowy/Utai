@@ -25,6 +25,12 @@ interface TrainingState {
   nodes: Node[]
   edges: Edge[]
   workflowName: string
+  dirty: boolean
+  projectPath: string | null
+  isSaving: boolean
+  markClean: () => void
+  setProjectPath: (path: string | null) => void
+  setIsSaving: (saving: boolean) => void
 
   // Graph actions
   onNodesChange: (changes: NodeChange[]) => void
@@ -74,40 +80,46 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
   nodes: [...DEFAULT_TRAIN_NODES],
   edges: [],
   workflowName: 'Untitled',
+  dirty: false,
+  projectPath: null,
+  isSaving: false,
+  markClean: () => set({ dirty: false }),
+  setProjectPath: (path) => set({ projectPath: path }),
+  setIsSaving: (saving) => set({ isSaving: saving }),
 
   onNodesChange: (changes) =>
-    set({ nodes: applyNodeChanges(changes, get().nodes) }),
+    set({ nodes: applyNodeChanges(changes, get().nodes), dirty: true }),
 
   onEdgesChange: (changes) =>
-    set({ edges: applyEdgeChanges(changes, get().edges) }),
+    set({ edges: applyEdgeChanges(changes, get().edges), dirty: true }),
 
   onConnect: (connection) => {
-    // Training page: allow multiple connections per input port
-    // (e.g. multiple audio sources → MSST batch node)
-    set({ edges: addEdge({ ...connection, type: 'smoothstep', animated: true }, get().edges) })
+    set({ edges: addEdge({ ...connection, type: 'smoothstep', animated: true }, get().edges), dirty: true })
   },
 
   addNode: (node) =>
-    set({ nodes: [...get().nodes, node] }),
+    set({ nodes: [...get().nodes, node], dirty: true }),
 
   removeNode: (id) =>
     set({
       nodes: get().nodes.filter((n) => n.id !== id),
       edges: get().edges.filter((e) => e.source !== id && e.target !== id),
+      dirty: true,
     }),
 
   removeEdge: (id) =>
-    set({ edges: get().edges.filter((e) => e.id !== id) }),
+    set({ edges: get().edges.filter((e) => e.id !== id), dirty: true }),
 
   updateNodeData: (id, data) =>
     set({
       nodes: get().nodes.map((n) =>
         n.id === id ? { ...n, data: { ...n.data, ...data } } : n,
       ),
+      dirty: true,
     }),
 
   setWorkflow: (name, nodes, edges) =>
-    set({ workflowName: name, nodes, edges, nodeStates: {} }),
+    set({ workflowName: name, nodes, edges, nodeStates: {}, dirty: false, projectPath: null }),
 
   // Node execution states
   nodeStates: {},
@@ -143,6 +155,8 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
     nodes: [...DEFAULT_TRAIN_NODES],
     edges: [],
     workflowName: 'Untitled',
+    dirty: false,
+    projectPath: null,
     nodeStates: {},
     isRunningAll: false,
     logs: [],
