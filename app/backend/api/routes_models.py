@@ -333,10 +333,37 @@ async def import_rvc_model(
         index_path = str(idx_dest)
         logger.info(f"RVC index imported: {index_file.filename}")
 
+    model_stem = Path(pth_file.filename).stem
+
+    async def _auto_detect():
+        try:
+            from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper
+            _range_tasks[model_stem] = {"status": "running", "progress": 0, "total": 61}
+
+            def progress_cb(i, total, midi):
+                _range_tasks[model_stem]["progress"] = i
+                _range_tasks[model_stem]["total"] = total
+
+            wrapper = get_s2h_wrapper()
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: wrapper.detect_range(pth_file.filename, 60, progress_cb),
+            )
+            range_json = weights_dir / f"{model_stem}_range.json"
+            range_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
+            _range_tasks[model_stem] = {"status": "done", "result": result}
+            logger.info(f"Auto range detection done: {model_stem}")
+        except Exception as e:
+            logger.warning(f"Auto range detection failed: {e}")
+            _range_tasks[model_stem] = {"status": "error", "error": str(e)}
+
+    asyncio.create_task(_auto_detect())
+
     return {
         "status": "imported",
-        "model_name": Path(pth_file.filename).stem,
+        "model_name": model_stem,
         "index_path": index_path,
+        "range_detection": "started",
     }
 
 
@@ -493,6 +520,85 @@ async def delete_model(model_name: str):
     return {"status": "deleted", "model_name": model_name}
 
 
-# ──────────────────────────────────────────────
+# ── RVC range detection ──────────────────────────────────────────────────
 
-# (DiffSinger voice bank management removed — replaced by Score2HuBERT)
+_range_tasks: dict[str, dict] = {}  # model_name → {status, progress, total, result}
+
+
+@router.post("/rvc/detect-range")
+async def detect_rvc_range(
+    model_name: str = Form(...),
+    reference_pitch: int = Form(60),
+):
+    """Start background range detection for an RVC model."""
+    from app.backend.config import RVC_ROOT
+
+    weights_dir = Path(RVC_ROOT) / "assets" / "weights"
+    pth = model_name if model_name.endswith(".pth") else f"{model_name}.pth"
+    if not (weights_dir / pth).exists():
+        raise HTTPException(404, f"RVC model not found: {model_name}")
+
+    clean_name = model_name.replace(".pth", "")
+    if clean_name in _range_tasks and _range_tasks[clean_name].get("status") == "running":
+        return {"status": "already_running", "model_name": clean_name}
+
+    _range_tasks[clean_name] = {"status": "running", "progress": 0, "total": 61}
+
+    async def _run():
+        try:
+            from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper
+            wrapper = get_s2h_wrapper()
+
+            def progress_cb(i, total, midi):
+                _range_tasks[clean_name]["progress"] = i
+                _range_tasks[clean_name]["total"] = total
+                _range_tasks[clean_name]["current_midi"] = midi
+
+            result = await asyncio.get_event_loop().run_in_executor(
+                None,
+                lambda: wrapper.detect_range(pth, reference_pitch, progress_cb),
+            )
+
+            range_json = weights_dir / f"{clean_name}_range.json"
+            range_json.write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+            _range_tasks[clean_name] = {"status": "done", "result": result}
+            logger.info(f"Range detection saved: {range_json}")
+        except Exception as e:
+            logger.error(f"Range detection failed for {clean_name}: {e}", exc_info=True)
+            _range_tasks[clean_name] = {"status": "error", "error": str(e)}
+
+    asyncio.create_task(_run())
+    return {"status": "started", "model_name": clean_name}
+
+
+@router.get("/rvc/range-status/{model_name}")
+async def get_rvc_range_status(model_name: str):
+    """Get range detection progress or results."""
+    clean_name = model_name.replace(".pth", "")
+
+    if clean_name in _range_tasks:
+        task = _range_tasks[clean_name]
+        if task["status"] == "done":
+            return {"status": "done", **task["result"]}
+        return task
+
+    from app.backend.config import RVC_ROOT
+    range_json = Path(RVC_ROOT) / "assets" / "weights" / f"{clean_name}_range.json"
+    if range_json.exists():
+        data = json.loads(range_json.read_text(encoding="utf-8"))
+        return {"status": "done", **data}
+
+    return {"status": "not_started"}
+
+
+@router.get("/rvc/range/{model_name}")
+async def get_rvc_range(model_name: str):
+    """Get cached range data for an RVC model (if available)."""
+    from app.backend.config import RVC_ROOT
+
+    clean_name = model_name.replace(".pth", "")
+    range_json = Path(RVC_ROOT) / "assets" / "weights" / f"{clean_name}_range.json"
+    if range_json.exists():
+        return json.loads(range_json.read_text(encoding="utf-8"))
+    return None

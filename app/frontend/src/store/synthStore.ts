@@ -71,6 +71,8 @@ interface SynthState {
   trackMuteStrategy: Record<number, string>;  // per-track mute strategy override
   globalF0Offset: number;
   pitchSnap: boolean;
+  affineTransform: boolean;                    // global affine pitch transform toggle
+  trackAffineTransform: Record<number, boolean>; // per-track override
 
   // Render
   renderStatus: 'idle' | 'rendering' | 'converting' | 'done' | 'error';
@@ -165,6 +167,8 @@ interface SynthState {
   setTrackMuteStrategy: (trackIndex: number, strategy: string) => void;
   setGlobalF0Offset: (offset: number) => void;
   togglePitchSnap: () => void;
+  setAffineTransform: (enabled: boolean) => void;
+  setTrackAffineTransform: (trackIndex: number, enabled: boolean) => void;
   rvcModelListVersion: number;
   bumpRvcModelList: () => void;
 
@@ -268,7 +272,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     pixelsPerTick: 0.15,
     pixelsPerSemitone: 20,
     snapTicks: RESOLUTION / 4,
-    trackLaneHeight: 96,
+    trackLaneHeight: 112,
   },
   singer: '',
   rvcModel: '',
@@ -282,6 +286,8 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   trackMuteStrategy: {},
   globalF0Offset: 0,
   pitchSnap: true,
+  affineTransform: false,
+  trackAffineTransform: {},
   renderStatus: 'idle',
   renderedUrl: null,
   finalUrl: null,
@@ -895,6 +901,19 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   })),
   setGlobalF0Offset: (offset) => set({ globalF0Offset: offset }),
   togglePitchSnap: () => set((s) => ({ pitchSnap: !s.pitchSnap })),
+  setAffineTransform: (enabled) => set((s) => {
+    const newTrack: Record<number, boolean> = {};
+    s.project.tracks.forEach((t, i) => {
+      if (t.track_type === 'vocal') newTrack[i] = enabled;
+    });
+    return { affineTransform: enabled, trackAffineTransform: newTrack };
+  }),
+  setTrackAffineTransform: (trackIndex, enabled) => set((s) => {
+    const next = { ...s.trackAffineTransform, [trackIndex]: enabled };
+    const allOn = s.project.tracks.every((t, i) =>
+      t.track_type !== 'vocal' || next[i] !== false);
+    return { trackAffineTransform: next, affineTransform: enabled ? allOn : false };
+  }),
   rvcModelListVersion: 0,
   bumpRvcModelList: () => set((s) => ({ rvcModelListVersion: s.rvcModelListVersion + 1 })),
 

@@ -93,10 +93,12 @@ async def s2h_render(
     f0_up_key: int = Form(0),
     mute_strategy: str = Form("auto"),
     index_rate: float = Form(0.75),
+    affine_transform: bool = Form(False),
 ):
     """Render notes via Score2HuBERT → RVC → post mute pipeline.
 
     notes: JSON array of {position, duration, tone, lyric}
+    affine_transform: if True, use affine pitch transform for range extension
     """
     from fastapi import HTTPException
 
@@ -108,13 +110,21 @@ async def s2h_render(
     if not notes_list:
         raise HTTPException(status_code=422, detail="No notes to render")
 
-    logger.info("S2H render request: %d notes, lang=%s, rvc=%s", len(notes_list), language, rvc_model)
+    logger.info("S2H render request: %d notes, lang=%s, rvc=%s, affine=%s",
+                len(notes_list), language, rvc_model, affine_transform)
 
-    from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper
+    from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper, RVC_WEIGHTS_DIR
 
     synth_output = OUTPUT_DIR / "synth"
     synth_output.mkdir(parents=True, exist_ok=True)
     output_path = str(synth_output / "s2h_render.wav")
+
+    range_data = None
+    if affine_transform and rvc_model:
+        clean = rvc_model.replace(".pth", "")
+        range_json = RVC_WEIGHTS_DIR / f"{clean}_range.json"
+        if range_json.exists():
+            range_data = json.loads(range_json.read_text(encoding="utf-8"))
 
     try:
         wrapper = get_s2h_wrapper()
@@ -127,6 +137,8 @@ async def s2h_render(
             f0_up_key=f0_up_key,
             mute_strategy=mute_strategy,
             index_rate=index_rate,
+            affine_transform=affine_transform,
+            range_data=range_data,
         )
     except (FileNotFoundError, ValueError) as e:
         logger.error(f"S2H render error: {e}")

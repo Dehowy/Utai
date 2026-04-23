@@ -82,7 +82,30 @@ function GlobalPitchOffset() {
   );
 }
 
+function AffineTransformToggle() {
+  const { t } = useTranslation();
+  const enabled = useSynthStore(s => s.affineTransform);
+  const setEnabled = useSynthStore(s => s.setAffineTransform);
+  return (
+    <div className="utai-synth-section" style={{ padding: '4px 10px' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-pixel)' }}>
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}
+          style={{ accentColor: 'var(--accent-purple)' }} />
+        <span style={{ color: enabled ? 'var(--accent-purple)' : '#8a8ab0' }}>
+          {t('synth.affineTransform')}
+        </span>
+      </label>
+      {enabled && (
+        <div style={{ fontSize: 8, color: '#5a5a7a', marginTop: 2, fontFamily: 'var(--font-pixel)' }}>
+          {t('synth.affineHint')}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function VocalTrackInspector() {
+  const { t } = useTranslation();
   const project = useSynthStore(s => s.project);
   const idx = useSynthStore(s => s.selectedTrackIndex);
   const track = project.tracks[idx];
@@ -97,6 +120,9 @@ function VocalTrackInspector() {
   const setTrackIndexRate = useSynthStore(s => s.setTrackIndexRate);
   const trackF0Offset = useSynthStore(s => s.trackF0Offset);
   const setTrackF0Offset = useSynthStore(s => s.setTrackF0Offset);
+  const affineGlobal = useSynthStore(s => s.affineTransform);
+  const trackAffine = useSynthStore(s => s.trackAffineTransform);
+  const setTrackAffine = useSynthStore(s => s.setTrackAffineTransform);
 
   if (!track || track.track_type !== 'vocal' || idx < 0) return null;
 
@@ -150,6 +176,16 @@ function VocalTrackInspector() {
           {f0Off > 0 ? '+' : ''}{f0Off}
         </span>
       </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+        <input type="checkbox"
+          checked={trackAffine[idx] ?? affineGlobal}
+          onChange={e => setTrackAffine(idx, e.target.checked)}
+          style={{ accentColor: '#9b6dff' }}
+        />
+        <span style={{ fontSize: 9, fontFamily: 'var(--font-pixel)', color: (trackAffine[idx] ?? affineGlobal) ? '#9b6dff' : 'var(--text-dim)' }}>
+          {t('synth.rangeExtend', 'Range Extend')}
+        </span>
+      </label>
     </div>
   );
 }
@@ -210,6 +246,7 @@ export default function ControlPanel() {
     <div className="utai-synth-control">
       {isArrangement && <RenderButton renderAll />}
       {isArrangement && <GlobalPitchOffset />}
+      {isArrangement && <AffineTransformToggle />}
 
       <ProjectInfo />
 
@@ -228,6 +265,7 @@ export default function ControlPanel() {
               <RVCModelSelector />
               <PitchShiftControl />
               <MuteStrategySelector />
+              <AffineTransformToggle />
             </>
           )}
 

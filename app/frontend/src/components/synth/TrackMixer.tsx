@@ -84,6 +84,9 @@ export default function TrackMixer() {
   const setTrackIndexRate = useSynthStore(s => s.setTrackIndexRate);
   const trackF0Offset = useSynthStore(s => s.trackF0Offset);
   const setTrackF0Offset = useSynthStore(s => s.setTrackF0Offset);
+  const affineTransform = useSynthStore(s => s.affineTransform);
+  const trackAffineTransform = useSynthStore(s => s.trackAffineTransform);
+  const setTrackAffineTransform = useSynthStore(s => s.setTrackAffineTransform);
   const rvcListVersion = useSynthStore(s => s.rvcModelListVersion);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const dragFrom = useRef(-1);
@@ -93,6 +96,7 @@ export default function TrackMixer() {
     getRVCModels().then(data => {
       setRvcModels((data || []).map((m: any) => ({
         name: m.name, filename: m.filename || m.name + '.pth',
+        range: m.range || undefined,
       })));
     }).catch(() => setRvcModels([]));
   }, [rvcListVersion]);
@@ -249,7 +253,9 @@ export default function TrackMixer() {
                 >
                   <option value="">RVC --</option>
                   {rvcModels.map(m => (
-                    <option key={m.filename} value={m.filename}>{m.name}</option>
+                    <option key={m.filename} value={m.filename}>
+                      {m.name}{(m as any).range ? ` [${(m as any).range.comfort_label}]` : ''}
+                    </option>
                   ))}
                 </select>
                 <select
@@ -313,6 +319,28 @@ export default function TrackMixer() {
                 color={c} label="Key" displayValue={`${(trackF0Offset[idx] ?? 0) > 0 ? '+' : ''}${trackF0Offset[idx] ?? 0}`}
               />
             )}
+            {/* Row 2e: Affine transform (vocal only) */}
+            {tt === 'vocal' && trackLaneHeight >= 100 && (() => {
+              const on = trackAffineTransform[idx] ?? affineTransform;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer' }}
+                  onClick={e => { e.stopPropagation(); setTrackAffineTransform(idx, !on); }}
+                  onMouseDown={e => e.stopPropagation()}
+                >
+                  <div style={{
+                    width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+                    border: `1px solid ${on ? '#9b6dff' : '#3a3a5a'}`,
+                    background: on ? '#9b6dff' : 'transparent',
+                  }} />
+                  <span style={{
+                    fontSize: 9, fontFamily: 'var(--font-pixel)',
+                    color: on ? '#c4a8ff' : '#6a6a8a',
+                  }}>
+                    RangeExt
+                  </span>
+                </div>
+              );
+            })()}
 
             {/* Row 3: Volume */}
             <MixerSlider

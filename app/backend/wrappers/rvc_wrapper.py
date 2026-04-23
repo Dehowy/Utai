@@ -68,20 +68,35 @@ class RVCWrapper:
             self._initialized = True
 
     def list_models(self) -> list[dict[str, Any]]:
-        """List available RVC voice models."""
+        """List available RVC voice models, including range data if available."""
+        import json as _json
         models = []
         weights_dir = Path(self._rvc_root) / "assets" / "weights"
         if not weights_dir.exists():
             return models
 
         for model_file in sorted(weights_dir.glob("*.pth")):
-            # Look for matching index file
             index_files = self._find_index_files(model_file.stem)
-            models.append({
+            entry: dict[str, Any] = {
                 "name": model_file.stem,
                 "path": str(model_file),
                 "index_files": index_files,
-            })
+            }
+            range_json = weights_dir / f"{model_file.stem}_range.json"
+            if range_json.exists():
+                try:
+                    rd = _json.loads(range_json.read_text(encoding="utf-8"))
+                    entry["range"] = {
+                        "range_low": rd.get("range_low"),
+                        "range_high": rd.get("range_high"),
+                        "comfort_low": rd.get("comfort_low"),
+                        "comfort_high": rd.get("comfort_high"),
+                        "range_label": rd.get("range_label"),
+                        "comfort_label": rd.get("comfort_label"),
+                    }
+                except Exception:
+                    pass
+            models.append(entry)
 
         return models
 

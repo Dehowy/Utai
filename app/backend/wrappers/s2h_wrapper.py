@@ -892,12 +892,380 @@ class S2HWrapper:
 
         return audio_np, sr
 
+    def render_with_affine(
+        self,
+        notes: list[dict],
+        bpm: float,
+        language: str = "zh",
+        rvc_model: str = "",
+        f0_up_key: int = 0,
+        mute_strategy: str = "auto",
+        index_rate: float = 0.75,
+        range_data: dict | None = None,
+    ) -> tuple[np.ndarray, int]:
+        """Render with affine pitch transform for RVC range extension.
+
+        Maps out-of-range notes into the RVC model's comfort zone via affine
+        transform, renders through S2H+RVC, then restores original pitches
+        via WORLD F0 replacement.
+        """
+        if not range_data:
+            return self.render(notes, bpm, language, rvc_model, f0_up_key,
+                               mute_strategy, index_rate)
+
+        comfort_low = range_data.get("comfort_low", 48)
+        comfort_high = range_data.get("comfort_high", 72)
+        range_low = range_data.get("range_low", comfort_low - 2)
+        range_high = range_data.get("range_high", comfort_high + 2)
+
+        voiced_notes = [n for n in notes if n.get("tone", 0) > 0]
+        if not voiced_notes:
+            return self.render(notes, bpm, language, rvc_model, f0_up_key,
+                               mute_strategy, index_rate)
+
+        target_midis = [n["tone"] + f0_up_key for n in voiced_notes]
+        min_target = min(target_midis)
+        max_target = max(target_midis)
+
+        if min_target >= comfort_low and max_target <= comfort_high:
+            logger.info("Affine: all notes in comfort zone — normal render")
+            return self.render(notes, bpm, language, rvc_model, f0_up_key,
+                               mute_strategy, index_rate)
+
+        if min_target >= range_low and max_target <= range_high:
+            logger.info("Affine: all notes in usable range — normal render (no WORLD needed)")
+            return self.render(notes, bpm, language, rvc_model, f0_up_key,
+                               mute_strategy, index_rate)
+
+        a, b = _compute_affine(min_target, max_target, comfort_low, comfort_high)
+        logger.info(f"Affine transform: [{min_target},{max_target}] → "
+                     f"[{comfort_low},{comfort_high}], a={a:.3f}, b={b:.2f}")
+
+        transformed_notes = []
+        for note in notes:
+            new_note = dict(note)
+            if note.get("tone", 0) > 0:
+                target = note["tone"] + f0_up_key
+                mapped = int(round(a * target + b))
+                mapped = max(comfort_low, min(comfort_high, mapped))
+                new_note["tone"] = mapped
+                if new_note.get("pitch") and new_note["pitch"].get("data"):
+                    new_note["pitch"] = {"data": [
+                        {"x": p["x"], "y": 0, "shape": p.get("shape", "io")}
+                        for p in new_note["pitch"]["data"]
+                    ]}
+            transformed_notes.append(new_note)
+
+        self._ensure_model()
+        if not rvc_model:
+            raise ValueError("No RVC model selected.")
+        self._ensure_rvc(rvc_model)
+
+        phonemes, pitch, durations, is_rest = self._notes_to_tensors(
+            transformed_notes, bpm, language)
+        total_frames = int(durations.sum())
+
+        comfort_f0 = _build_f0_from_notes(transformed_notes, bpm, total_frames)
+        target_f0 = _build_f0_from_notes(notes, bpm, total_frames,
+                                          pitch_shift=f0_up_key)
+
+        with torch.no_grad():
+            f0_in = comfort_f0.unsqueeze(0).to(self._device)
+            out = self._model(
+                phonemes=phonemes.unsqueeze(0).to(self._device),
+                pitch=pitch.unsqueeze(0).to(self._device),
+                durations=durations.unsqueeze(0).to(self._device),
+                f0_target=f0_in,
+            )
+        pred_hubert = out["hubert_pred"][0].float().cpu()
+        del out, f0_in
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        if self._rvc_index is not None and self._rvc_big_npy is not None and index_rate > 0:
+            npy = pred_hubert.numpy().astype("float32")
+            score, ix = self._rvc_index.search(npy, k=8)
+            weight = np.square(1.0 / score)
+            weight /= weight.sum(axis=1, keepdims=True)
+            retrieved = np.sum(self._rvc_big_npy[ix] * np.expand_dims(weight, axis=2), axis=1)
+            pred_hubert = (
+                torch.from_numpy(retrieved).float() * index_rate
+                + (1 - index_rate) * pred_hubert
+            )
+
+        audio = _rvc_decode_chunked(
+            self._rvc_net_g, self._rvc_sid, pred_hubert, comfort_f0,
+            self._device, self._rvc_sr,
+        )
+        sr = self._rvc_sr
+        del pred_hubert
+
+        audio_np = audio.numpy()
+        del audio
+
+        import time as _time
+        needs_shift = not np.isclose(a, 1.0) or not np.isclose(b, 0.0)
+        if needs_shift:
+            t0 = _time.perf_counter()
+            if np.isclose(a, 1.0):
+                shift_st = -b
+                logger.info(f"Affine: uniform WORLD shift {shift_st:+.1f} semitones "
+                             f"({len(audio_np)/sr:.1f}s audio)")
+                audio_np = _world_uniform_shift(audio_np, sr, shift_st)
+            else:
+                target_np = target_f0.numpy()
+                logger.info(f"Affine: per-frame WORLD F0 replacement "
+                             f"({len(audio_np)/sr:.1f}s audio)")
+                audio_np = _world_replace_f0(audio_np, sr, target_np)
+            logger.info(f"Affine: WORLD done in {_time.perf_counter()-t0:.1f}s")
+
+        if mute_strategy in ("auto", "post", "both"):
+            frame_is_rest = np.repeat(is_rest.numpy(), durations.numpy())
+            envelope = _build_post_mute_envelope_from_rest(
+                frame_is_rest, len(audio_np), sr)
+            audio_np = audio_np * envelope
+
+        peak = np.abs(audio_np).max()
+        if peak > 0:
+            audio_np = audio_np / peak * 0.95
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        return audio_np, sr
+
+    def detect_range(
+        self,
+        rvc_model: str,
+        reference_pitch: int = 60,
+        progress_cb=None,
+    ) -> dict:
+        """Test RVC model across MIDI range, return usable pitch bounds.
+
+        Tests every semitone from MIDI 36 (C2) to 96 (C8).
+        """
+        import librosa
+
+        self._ensure_model()
+        self._ensure_rvc(rvc_model)
+
+        test_bpm = 120.0
+        test_lyric = "あ"
+        test_dur = 480
+
+        results = []
+        midi_range = list(range(36, 97))
+        total = len(midi_range)
+
+        for i, midi in enumerate(midi_range):
+            if progress_cb:
+                progress_cb(i, total, midi)
+
+            test_note = [{"position": 0, "duration": test_dur,
+                          "tone": midi, "lyric": test_lyric}]
+            try:
+                use_index = 0.75 if self._rvc_index is not None else 0.0
+                audio, sr = self.render(
+                    notes=test_note, bpm=test_bpm, language="ja",
+                    rvc_model=rvc_model, f0_up_key=0,
+                    mute_strategy="raw", index_rate=use_index,
+                )
+                expected_hz = 440.0 * (2 ** ((midi - 69) / 12.0))
+                f0_detected, voiced, _ = librosa.pyin(
+                    audio.astype(np.float32), fmin=30, fmax=4200, sr=sr)
+                voiced_mask = voiced & (f0_detected > 0)
+                voiced_ratio = float(voiced_mask.sum() / max(len(voiced), 1))
+
+                if voiced_ratio > 0.1:
+                    median_f0 = float(np.nanmedian(f0_detected[voiced_mask]))
+                    error_cents = 1200 * np.log2(median_f0 / expected_hz) if median_f0 > 0 else 9999
+                else:
+                    median_f0 = 0.0
+                    error_cents = 9999.0
+
+                err_abs = float(abs(error_cents))
+                vr = float(voiced_ratio)
+                results.append({
+                    "midi": midi,
+                    "expected_hz": round(expected_hz, 1),
+                    "detected_hz": round(median_f0, 1),
+                    "f0_error_cents": round(err_abs, 1),
+                    "voiced_ratio": round(vr, 3),
+                    "usable": bool(err_abs < 100 and vr > 0.5),
+                    "comfort": bool(err_abs < 50 and vr > 0.8),
+                })
+            except Exception as e:
+                logger.warning(f"Range test MIDI {midi} failed: {e}")
+                results.append({
+                    "midi": midi, "expected_hz": 0, "detected_hz": 0,
+                    "f0_error_cents": 9999, "voiced_ratio": 0,
+                    "usable": False, "comfort": False,
+                })
+
+        usable = [r for r in results if r["usable"]]
+        comfort = [r for r in results if r["comfort"]]
+
+        range_low = usable[0]["midi"] if usable else reference_pitch - 6
+        range_high = usable[-1]["midi"] if usable else reference_pitch + 6
+        comfort_low = comfort[0]["midi"] if comfort else range_low + 2
+        comfort_high = comfort[-1]["midi"] if comfort else range_high - 2
+
+        note_names = ["C", "C#", "D", "D#", "E", "F",
+                      "F#", "G", "G#", "A", "A#", "B"]
+
+        def midi_name(m):
+            return f"{note_names[m % 12]}{m // 12 - 1}"
+
+        result = {
+            "model_name": rvc_model.replace(".pth", ""),
+            "reference_pitch": reference_pitch,
+            "range_low": range_low,
+            "range_high": range_high,
+            "comfort_low": comfort_low,
+            "comfort_high": comfort_high,
+            "range_label": f"{midi_name(range_low)}-{midi_name(range_high)}",
+            "comfort_label": f"{midi_name(comfort_low)}-{midi_name(comfort_high)}",
+            "results": results,
+        }
+
+        logger.info(f"Range detection: {rvc_model} → usable {result['range_label']}, "
+                     f"comfort {result['comfort_label']}")
+        return result
+
     def render_to_file(self, output_path: str, **kwargs) -> str:
         """Render and save to WAV file. Returns the output path."""
-        audio, sr = self.render(**kwargs)
+        affine = kwargs.pop("affine_transform", False)
+        range_data = kwargs.pop("range_data", None)
+        if affine and range_data:
+            audio, sr = self.render_with_affine(range_data=range_data, **kwargs)
+        else:
+            audio, sr = self.render(**kwargs)
         sf.write(output_path, audio, sr)
         logger.info(f"Saved: {output_path} ({len(audio)/sr:.2f}s)")
         return output_path
+
+
+def _compute_affine(
+    min_target: int, max_target: int,
+    comfort_low: int, comfort_high: int,
+) -> tuple[float, float]:
+    """Compute minimal affine transform f(m)=a*m+b mapping [min,max]→comfort zone."""
+    source_range = max_target - min_target
+    comfort_range = comfort_high - comfort_low
+
+    if source_range == 0:
+        center = (comfort_low + comfort_high) / 2
+        return 1.0, center - min_target
+
+    if source_range <= comfort_range:
+        a = 1.0
+        if min_target < comfort_low:
+            b = float(comfort_low - min_target)
+        elif max_target > comfort_high:
+            b = float(comfort_high - max_target)
+        else:
+            b = 0.0
+    else:
+        a = comfort_range / source_range
+        b = comfort_low - a * min_target
+
+    return a, b
+
+
+def _build_f0_from_notes(
+    notes: list[dict], bpm: float, total_frames: int,
+    pitch_shift: int = 0,
+) -> torch.Tensor:
+    """Build per-frame F0 curve from notes (always returns a curve, never None)."""
+    resolution = 480
+    ticks_per_sec = (bpm * resolution) / 60.0
+    f0 = np.zeros(total_frames, dtype=np.float32)
+
+    for note in sorted(notes, key=lambda n: n["position"]):
+        tone = note.get("tone", 0)
+        if tone <= 0:
+            continue
+        pos_sec = note["position"] / ticks_per_sec
+        dur_sec = note["duration"] / ticks_per_sec
+        start_frame = round(pos_sec * 50)
+        end_frame = round((pos_sec + dur_sec) * 50)
+        effective_midi = tone + pitch_shift
+        hz = _midi_to_hz(effective_midi)
+
+        pitch_data = note.get("pitch", {}).get("data", [])
+        if pitch_data:
+            dur_ms = dur_sec * 1000
+            ms_curve = _interpolate_pitch_points(pitch_data, dur_ms, effective_midi)
+            for f in range(start_frame, min(end_frame, total_frames)):
+                ms_idx = min(int((f - start_frame) / 50 * 1000), len(ms_curve) - 1)
+                f0[f] = ms_curve[max(0, ms_idx)]
+        else:
+            for f in range(start_frame, min(end_frame, total_frames)):
+                f0[f] = hz
+
+    return torch.from_numpy(f0)
+
+
+def _match_length(audio: np.ndarray, target_len: int) -> np.ndarray:
+    """Pad or trim WORLD output to match original sample count exactly."""
+    if len(audio) == target_len:
+        return audio
+    if len(audio) > target_len:
+        return audio[:target_len]
+    return np.pad(audio, (0, target_len - len(audio)))
+
+
+def _world_uniform_shift(
+    audio: np.ndarray, sr: int, semitones: float,
+) -> np.ndarray:
+    """Uniform pitch shift via WORLD — uses dio (fast) instead of harvest."""
+    import pyworld as pw
+
+    original_len = len(audio)
+    audio_f64 = audio.astype(np.float64)
+    f0, t = pw.dio(audio_f64, sr)
+    f0 = pw.stonemask(audio_f64, f0, t, sr)
+    sp = pw.cheaptrick(audio_f64, f0, t, sr)
+    ap = pw.d4c(audio_f64, f0, t, sr)
+
+    f0_new = f0.copy()
+    f0_new[f0_new > 0] *= 2.0 ** (semitones / 12.0)
+
+    y = pw.synthesize(f0_new, sp, np.ascontiguousarray(ap), sr)
+    y = _match_length(y, original_len)
+    return y.astype(np.float32)
+
+
+def _world_replace_f0(
+    audio: np.ndarray, sr: int, target_f0_50fps: np.ndarray,
+) -> np.ndarray:
+    """Replace F0 in audio with target F0 curve using WORLD vocoder.
+
+    Raw shift only — no formant modification, preserves voice character.
+    """
+    import pyworld as pw
+
+    original_len = len(audio)
+    audio_f64 = audio.astype(np.float64)
+    f0, t = pw.dio(audio_f64, sr)
+    f0 = pw.stonemask(audio_f64, f0, t, sr)
+    sp = pw.cheaptrick(audio_f64, f0, t, sr)
+    ap = pw.d4c(audio_f64, f0, t, sr)
+
+    world_frames = len(f0)
+    target_resampled = np.interp(
+        np.linspace(0, 1, world_frames),
+        np.linspace(0, 1, len(target_f0_50fps)),
+        target_f0_50fps,
+    )
+
+    f0_new = f0.copy()
+    voiced = target_resampled > 0
+    f0_new[voiced] = target_resampled[voiced]
+
+    y = pw.synthesize(f0_new, sp, np.ascontiguousarray(ap), sr)
+    y = _match_length(y, original_len)
+    return y.astype(np.float32)
 
 
 _wrapper: Optional[S2HWrapper] = None

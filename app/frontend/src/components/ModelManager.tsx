@@ -28,6 +28,7 @@ import {
   getVSTPlugins,
   importVSTPlugin,
   deleteVSTPlugin,
+  getRVCRangeStatus,
 } from '../api/client'
 import { emitModelsChanged } from '../utils/modelEvents'
 
@@ -278,6 +279,8 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
   const [importPthPath, setImportPthPath] = useState('')
   const [importIdxPath, setImportIdxPath] = useState('')
   const [importing, setImporting] = useState(false)
+  const [rangeDetecting, setRangeDetecting] = useState<string | null>(null)
+  const rangePollRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const [importError, setImportError] = useState('')
   const pthInputRef = useRef<HTMLInputElement>(null)
   const idxInputRef = useRef<HTMLInputElement>(null)
@@ -294,14 +297,34 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     }
     setImporting(true)
     try {
-      await importRVCModel(importPthFile, importIdxFile || undefined)
+      const result = await importRVCModel(importPthFile, importIdxFile || undefined)
       refreshRvcData()
       emitModelsChanged()
-      setImportOpen(false)
       setImportPthFile(null)
       setImportIdxFile(null)
       setImportPthPath('')
       setImportIdxPath('')
+      setImporting(false)
+
+      if (result.range_detection === 'started' && result.model_name) {
+        setRangeDetecting(result.model_name)
+        if (rangePollRef.current) clearInterval(rangePollRef.current)
+        rangePollRef.current = setInterval(async () => {
+          try {
+            const status = await getRVCRangeStatus(result.model_name)
+            if (status.status === 'done' || status.status === 'error') {
+              if (rangePollRef.current) clearInterval(rangePollRef.current)
+              rangePollRef.current = null
+              setRangeDetecting(null)
+              setImportOpen(false)
+              refreshRvcData()
+              emitModelsChanged()
+            }
+          } catch { /* keep polling */ }
+        }, 2000)
+      } else {
+        setImportOpen(false)
+      }
     } catch (err: any) {
       const msg = err?.message || String(err)
       if (msg.includes('409')) {
@@ -309,8 +332,8 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
       } else {
         setImportError(msg)
       }
+      setImporting(false)
     }
-    setImporting(false)
   }, [importPthFile, importIdxFile, refreshRvcData, t])
 
   // ── RVC archive ──
@@ -724,6 +747,11 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                       {importing ? t('models.rvcImportUploading') : t('models.rvcImportSubmit')}
                     </button>
                   </div>
+                  {rangeDetecting && (
+                    <div style={{ marginTop: 6, fontSize: 10, color: 'var(--accent-purple)', fontFamily: 'var(--font-pixel)' }}>
+                      {t('models.rvcDetectingRange', { name: rangeDetecting })}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -735,11 +763,11 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                       return (
                         <div key={m.name} className={`utai-model-manager__item ${deleteMode ? 'utai-model-manager__item--delete-mode' : ''}`}>
                           <div className="utai-model-manager__item-info">
-                            <span className="utai-model-manager__item-name">
+                            <span className="utai-model-manager__item-name" style={{ color: '#9b6dff', fontSize: 14 }}>
                               {m.name}
                             </span>
-                            <span className="utai-model-manager__item-size" style={{ color: 'var(--text-muted)', fontSize: 9 }}>
-                              {m.index_files?.length ? `${m.index_files.length} index` : ''}
+                            <span className="utai-model-manager__item-size" style={{ color: m.range ? '#e0e0e8' : 'var(--text-muted)', fontSize: 12, fontWeight: 400 }}>
+                              {m.range ? m.range.comfort_label : ''}{m.index_files?.length ? ` | ${m.index_files.length} idx` : ''}
                             </span>
                           </div>
                           <div className="utai-model-manager__item-actions">

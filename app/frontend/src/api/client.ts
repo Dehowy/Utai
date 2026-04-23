@@ -74,6 +74,20 @@ export const restoreRVCModel = (archivedName: string) =>
 export const deleteArchivedRVCModel = (archivedName: string) =>
   fetchJSON<any>(`/api/models/rvc/archived/${encodeURIComponent(archivedName)}`, { method: 'DELETE' })
 
+// RVC range detection
+export async function detectRVCRange(modelName: string, referencePitch = 60) {
+  const form = new FormData()
+  form.append('model_name', modelName)
+  form.append('reference_pitch', String(referencePitch))
+  const res = await fetch(`${API_BASE}/api/models/rvc/detect-range`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error(`Range detection failed: ${res.status}`)
+  return res.json()
+}
+export const getRVCRangeStatus = (modelName: string) =>
+  fetchJSON<any>(`/api/models/rvc/range-status/${encodeURIComponent(modelName)}`)
+export const getRVCRange = (modelName: string) =>
+  fetchJSON<any>(`/api/models/rvc/range/${encodeURIComponent(modelName)}`)
+
 // DiffSinger removed — replaced by Score2HuBERT. Stubs kept for compile compat.
 export const getDiffSingerModels = () => Promise.resolve([])
 export const getDiffSingerCatalog = () => Promise.resolve({ vocoders: [], singers: [] })

@@ -14,9 +14,11 @@ export function getTrackFingerprint(trackIdx: number): string {
     const idxRate = s.trackIndexRate[trackIdx] ?? s.rvcSettings.index_rate;
     const f0Off = (s.trackF0Offset[trackIdx] ?? 0) + (s.globalF0Offset || 0);
     const muteStrat = s.trackMuteStrategy[trackIdx] || s.muteStrategy;
+    const affine = s.trackAffineTransform[trackIdx] ?? s.affineTransform;
     return JSON.stringify({
       p: parts.map(p => ({ pos: p.position, n: p.notes })),
-      rvc: rvcModel, f0: s.rvcSettings.f0_up_key, gf0: f0Off, idx: idxRate, lang, mute: muteStrat,
+      rvc: rvcModel, f0: s.rvcSettings.f0_up_key, gf0: f0Off, idx: idxRate,
+      lang, mute: muteStrat, affine,
     });
   }
   if (track.track_type === 'instrument') {
@@ -92,6 +94,8 @@ export async function renderSingleTrack(
     const rvcModel = s.trackRvcModel[trackIdx] || s.rvcModel;
     if (!rvcModel) return false;
 
+    const affine = s.trackAffineTransform[trackIdx] ?? s.affineTransform;
+
     const form = new FormData();
     form.append('notes', JSON.stringify(allNotes));
     form.append('bpm', String(bpm));
@@ -100,6 +104,7 @@ export async function renderSingleTrack(
     form.append('f0_up_key', String((s.trackF0Offset[trackIdx] ?? 0) + (s.globalF0Offset || 0)));
     form.append('index_rate', String(s.trackIndexRate[trackIdx] ?? s.rvcSettings.index_rate));
     form.append('mute_strategy', s.trackMuteStrategy[trackIdx] || s.muteStrategy);
+    if (affine) form.append('affine_transform', 'true');
 
     const res = await fetch('/api/synth/s2h/render', { method: 'POST', body: form, signal });
     if (!res.ok) {
