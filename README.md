@@ -58,11 +58,15 @@ Option B: manual (CUDA 12.1 example):
 ```bash
 py -3.10 -m venv venv
 venv\Scripts\activate
-pip install -r requirements-torch-cu121.txt
+pip install --upgrade pip
+pip install -r requirements-torch-cu121.txt --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt
 ```
 
-Other GPU options: `requirements-torch-cu124.txt` (CUDA 12.4), `requirements-torch-cu128.txt` (CUDA 12.8), `requirements-torch-cpu.txt` (CPU only).
+Other GPU options (change both the file and `--index-url`):
+- CUDA 12.4: `requirements-torch-cu124.txt` + `--index-url https://download.pytorch.org/whl/cu124`
+- CUDA 12.8: `requirements-torch-cu128.txt` + `--index-url https://download.pytorch.org/whl/cu128`
+- CPU only: `requirements-torch-cpu.txt` (no `--index-url` needed)
 
 > **fairseq** (needed for RVC workflow-page voice conversion) must be installed with `--no-deps` due to omegaconf version conflict with MSST:
 > ```bash
