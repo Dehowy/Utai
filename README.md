@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.0-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.7.0-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -505,6 +505,28 @@ Import paths like `from inference.msst_infer import MSSeparator` and `from utils
 
 ---
 
+## Troubleshooting
+
+Common issues encountered during development setup:
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `torch` installs CPU-only version | Missing `--index-url` flag | **Must** add `--index-url https://download.pytorch.org/whl/cu121` (or your CUDA version) when running `pip install -r requirements-torch-*.txt` |
+| `No module named 'pkg_resources'` | `setuptools>=71` installed | Pin setuptools first: `pip install "setuptools<71"` before other packages |
+| `omegaconf` version conflict | fairseq pulls incompatible version | Always: `pip install --no-deps fairseq>=0.12.2`, then `pip install hydra-core bitarray sacrebleu` separately |
+| UI shows `{"detail":"Not Found"}` | Frontend static files not built | Run `npm run build` in `app/frontend/`, then copy `dist/*` → `app/backend/static/` |
+| `ffmpeg not found` during audio processing | ffmpeg not in expected paths | Place `ffmpeg.exe` in **both** `bin/` (for MSST) **and** `RVC/RVC20240604Nvidia/` (for RVC training) |
+| RVC training completes instantly (0 steps) | Missing pretrained models | Download all 12 `.pth` files into `RVC/RVC20240604Nvidia/assets/pretrained_v2/` |
+| RVC training crashes with `USE_LIBUV` error | Windows libuv socket issue | Already handled in code (`USE_LIBUV=0`). If using raw RVC scripts, set `set USE_LIBUV=0` before running |
+| RVC training crashes with `MASTER_ADDR` error | Windows resolves `localhost` to hostname | Already fixed in code (uses `127.0.0.1`). If raw scripts, set `set MASTER_ADDR=127.0.0.1` |
+| MSST loads wrong model architecture | Config file naming mismatch | MSST configs are named `{model}.ckpt.yaml` (not `{model}.yaml`). Ensure `MSST/configs/` has all subdirectories intact |
+| Console windows flash during processing | Subprocess patch missing or bypassed | `main.py` globally patches `subprocess.Popen` with `CREATE_NO_WINDOW`. Never remove this. For `asyncio.create_subprocess_exec`, pass `creationflags=0x08000000` |
+| Port 8765 conflict | Previous backend instance still running | Kill existing Python processes, or change `PORT` in `app/backend/config.py` |
+| `faiss` disappears from venv | Overwritten by other package installs | Re-run `pip install faiss-cpu` after bulk installs |
+| Export audio 500 error in Electron build | `tkinter` unavailable in embedded Python | Already fixed — export uses Electron IPC for file dialogs. Dev mode falls back to tkinter |
+
+---
+
 ## Credits
 
 - [MSST](https://github.com/ZFTurbo/Music-Source-Separation-Training) — Audio separation framework
@@ -524,5 +546,5 @@ Import paths like `from inference.msst_infer import MSSeparator` and `from utils
 
 <p align="center">
   <sub>Built with FastAPI, React Flow, PyTorch, and a love for retro UI design</sub><br>
-  <sub>v1.6.0</sub>
+  <sub>v1.7.0</sub>
 </p>

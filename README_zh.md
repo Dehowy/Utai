@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.0-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.7.0-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -505,6 +505,28 @@ Utai/
 
 ---
 
+## 常见问题排查
+
+开发环境配置中的常见问题：
+
+| 症状 | 原因 | 解决方法 |
+|------|------|----------|
+| `torch` 安装了 CPU 版本 | 缺少 `--index-url` 参数 | 安装 PyTorch 时**必须**加 `--index-url https://download.pytorch.org/whl/cu121`（或对应 CUDA 版本） |
+| `No module named 'pkg_resources'` | 安装了 `setuptools>=71` | 先固定版本：`pip install "setuptools<71"`，再安装其他包 |
+| `omegaconf` 版本冲突 | fairseq 拉取了不兼容版本 | 必须：`pip install --no-deps fairseq>=0.12.2`，然后单独 `pip install hydra-core bitarray sacrebleu` |
+| 界面显示 `{"detail":"Not Found"}` | 前端静态文件未构建 | 在 `app/frontend/` 执行 `npm run build`，然后将 `dist/*` 复制到 `app/backend/static/` |
+| 音频处理时 `ffmpeg not found` | ffmpeg 不在预期路径 | 将 `ffmpeg.exe` 放在 `bin/`（MSST 用）**和** `RVC/RVC20240604Nvidia/`（RVC 训练用）**两个位置** |
+| RVC 训练瞬间完成（0 步） | 缺少预训练模型 | 将全部 12 个 `.pth` 文件下载到 `RVC/RVC20240604Nvidia/assets/pretrained_v2/` |
+| RVC 训练 `USE_LIBUV` 报错 | Windows libuv 套接字问题 | 代码中已处理（`USE_LIBUV=0`）。若使用原始 RVC 脚本，运行前设置 `set USE_LIBUV=0` |
+| RVC 训练 `MASTER_ADDR` 报错 | Windows 将 `localhost` 解析为主机名 | 代码中已修复（使用 `127.0.0.1`）。若用原始脚本，设置 `set MASTER_ADDR=127.0.0.1` |
+| MSST 加载了错误的模型架构 | 配置文件命名不匹配 | MSST 配置文件命名为 `{model}.ckpt.yaml`（不是 `{model}.yaml`）。确保 `MSST/configs/` 的子目录完整 |
+| 处理时弹出控制台窗口 | 子进程补丁缺失或被绕过 | `main.py` 全局补丁了 `subprocess.Popen` 加 `CREATE_NO_WINDOW`。勿删除。`asyncio.create_subprocess_exec` 需传 `creationflags=0x08000000` |
+| 端口 8765 冲突 | 之前的后端实例仍在运行 | 结束已有 Python 进程，或修改 `app/backend/config.py` 中的 `PORT` |
+| `faiss` 从虚拟环境消失 | 被其他包安装覆盖 | 批量安装后重新 `pip install faiss-cpu` |
+| Electron 版导出音频 500 错误 | 嵌入式 Python 无 `tkinter` | 已修复 — 导出使用 Electron IPC 文件对话框。开发模式回退到 tkinter |
+
+---
+
 ## 致谢
 
 - [MSST](https://github.com/ZFTurbo/Music-Source-Separation-Training) — 音频分离框架
@@ -524,5 +546,5 @@ Utai/
 
 <p align="center">
   <sub>基于 FastAPI、React Flow、PyTorch 构建，致敬复古 UI 设计</sub><br>
-  <sub>v1.6.0</sub>
+  <sub>v1.7.0</sub>
 </p>

@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.6.0-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.7.0-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -505,6 +505,28 @@ Utai/
 
 ---
 
+## トラブルシューティング
+
+開発環境セットアップ時によくある問題：
+
+| 症状 | 原因 | 解決方法 |
+|------|------|----------|
+| `torch` が CPU 版のみインストールされる | `--index-url` フラグの欠落 | PyTorch インストール時に**必ず** `--index-url https://download.pytorch.org/whl/cu121`（またはご使用の CUDA バージョン）を付加 |
+| `No module named 'pkg_resources'` | `setuptools>=71` がインストール済み | 先にバージョン固定：`pip install "setuptools<71"` してから他パッケージをインストール |
+| `omegaconf` バージョン競合 | fairseq が非互換バージョンを取得 | 必ず：`pip install --no-deps fairseq>=0.12.2`、次に `pip install hydra-core bitarray sacrebleu` を個別実行 |
+| UI に `{"detail":"Not Found"}` と表示 | フロントエンド静的ファイル未ビルド | `app/frontend/` で `npm run build` を実行し、`dist/*` → `app/backend/static/` にコピー |
+| オーディオ処理で `ffmpeg not found` | ffmpeg が想定パスにない | `ffmpeg.exe` を `bin/`（MSST 用）**と** `RVC/RVC20240604Nvidia/`（RVC 学習用）の**両方**に配置 |
+| RVC 学習が即座に完了（0 ステップ） | 事前学習モデルの不在 | 12 個すべての `.pth` ファイルを `RVC/RVC20240604Nvidia/assets/pretrained_v2/` にダウンロード |
+| RVC 学習で `USE_LIBUV` エラー | Windows libuv ソケット問題 | コードで対処済み（`USE_LIBUV=0`）。生の RVC スクリプト使用時は `set USE_LIBUV=0` を設定 |
+| RVC 学習で `MASTER_ADDR` エラー | Windows が `localhost` をホスト名に解決 | コードで修正済み（`127.0.0.1` を使用）。生スクリプトの場合は `set MASTER_ADDR=127.0.0.1` |
+| MSST が間違ったモデルアーキテクチャを読み込む | 設定ファイル名の不一致 | MSST 設定ファイルは `{model}.ckpt.yaml`（`{model}.yaml` ではない）。`MSST/configs/` のサブディレクトリが完全か確認 |
+| 処理中にコンソールウィンドウが点滅 | subprocess パッチの欠落またはバイパス | `main.py` は `subprocess.Popen` を `CREATE_NO_WINDOW` でグローバルパッチ。削除禁止。`asyncio.create_subprocess_exec` には `creationflags=0x08000000` を渡す |
+| ポート 8765 の競合 | 前回のバックエンドインスタンスがまだ実行中 | 既存の Python プロセスを終了するか、`app/backend/config.py` の `PORT` を変更 |
+| `faiss` が venv から消える | 他パッケージのインストールで上書き | 一括インストール後に `pip install faiss-cpu` を再実行 |
+| Electron ビルドでオーディオエクスポート 500 エラー | 組み込み Python に `tkinter` なし | 修正済み — エクスポートは Electron IPC のファイルダイアログを使用。開発モードは tkinter にフォールバック |
+
+---
+
 ## クレジット
 
 - [MSST](https://github.com/ZFTurbo/Music-Source-Separation-Training) — 音声分離フレームワーク
@@ -524,5 +546,5 @@ Utai/
 
 <p align="center">
   <sub>FastAPI、React Flow、PyTorch で構築 — レトロ UI デザインへの愛を込めて</sub><br>
-  <sub>v1.6.0</sub>
+  <sub>v1.7.0</sub>
 </p>
