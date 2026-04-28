@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.7.0-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.6.0-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -336,21 +336,21 @@ python scripts/apply_midi_mute.py --input test_outputs/ --output test_outputs_mu
 ┌─────────────────────────────────────────────────────────┐
 │  Electron Shell (Utai.exe)                              │
 │  ┌───────────────────────────────────────────────────┐  │
-│  │  React Frontend (React Flow + Canvas DAW)          │  │
-│  │  http://127.0.0.1:{port}                           │  │
+│  │  React Frontend (React Flow + Canvas DAW)         │  │
+│  │  http://127.0.0.1:{port}                          │  │
 │  └────────────────────┬──────────────────────────────┘  │
-│                       │ HTTP/WS                          │
+│                       │ HTTP/WS                         │
 │  ┌────────────────────┴──────────────────────────────┐  │
-│  │  Python Backend (FastAPI + Uvicorn)                │  │
-│  │  ├─ Node Executor (topological sort, async)        │  │
-│  │  ├─ MSST Wrapper (113 separation models)           │  │
-│  │  ├─ RVC Wrapper (inference + training)             │  │
-│  │  ├─ Score2HuBERT Wrapper (singing synthesis)       │  │
+│  │  Python Backend (FastAPI + Uvicorn)               │  │
+│  │  ├─ Node Executor (topological sort, async)       │  │
+│  │  ├─ MSST Wrapper (113 separation models)          │  │
+│  │  ├─ RVC Wrapper (inference + training)            │  │
+│  │  ├─ Score2HuBERT Wrapper (singing synthesis)      │  │
 │  │  │  └─ UtaiRenderer.exe (.NET 8 / OpenUtau Core)  │  │
-│  │  ├─ VST Wrapper (JUCE host bridge)                 │  │
-│  │  ├─ Audio Buffer Manager (disk-backed)             │  │
-│  │  └─ WebSocket (real-time progress)                 │  │
-│  └────────────────────────────────────────────────────┘  │
+│  │  ├─ VST Wrapper (JUCE host bridge)                │  │
+│  │  ├─ Audio Buffer Manager (disk-backed)            │  │
+│  │  └─ WebSocket (real-time progress)                │  │
+│  └───────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -524,5 +524,5 @@ Utai/
 
 <p align="center">
   <sub>FastAPI、React Flow、PyTorch で構築 — レトロ UI デザインへの愛を込めて</sub><br>
-  <sub>v1.7.0</sub>
+  <sub>v1.6.0</sub>
 </p>
