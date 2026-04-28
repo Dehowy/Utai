@@ -63,6 +63,12 @@ interface TrainingState {
   activeTaskId: string | null
   setActiveTaskId: (id: string | null) => void
 
+  // Training report modal (shared between TrainRVCNode and TrainingPage)
+  reportOpen: boolean
+  reportData: { expName: string; success: boolean; startTime: number }
+  openReport: (data: { expName: string; success: boolean; startTime: number }) => void
+  closeReport: () => void
+
   // Reset everything
   clearTraining: () => void
 }
@@ -150,6 +156,11 @@ export const useTrainingStore = create<TrainingState>((set, get) => ({
 
   activeTaskId: null,
   setActiveTaskId: (id) => set({ activeTaskId: id }),
+
+  reportOpen: false,
+  reportData: { expName: '', success: false, startTime: 0 },
+  openReport: (data) => set({ reportData: data, reportOpen: true }),
+  closeReport: () => set({ reportOpen: false }),
 
   clearTraining: () => set({
     nodes: [...DEFAULT_TRAIN_NODES],

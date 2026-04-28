@@ -31,29 +31,19 @@ def wav2(i, o, format):
 def load_audio(file, sr):
     try:
         file = clean_path(file)
-        import subprocess
-        args = (
-            ffmpeg.input(file, threads=0)
-            .output("-", format="f32le", acodec="pcm_f32le", ac=1, ar=sr)
-            .get_args()
-        )
-        kw = {}
-        if platform.system() == "Windows":
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            kw["startupinfo"] = si
-            kw["creationflags"] = 0x08000000
-        p = subprocess.run(
-            ["ffmpeg", "-nostdin"] + args,
-            capture_output=True, **kw,
-        )
-        if p.returncode != 0:
-            raise RuntimeError(p.stderr.decode(errors="replace"))
-        out = p.stdout
+        container = av.open(file)
+        resampler = av.AudioResampler(format="flt", layout="mono", rate=sr)
+        chunks = []
+        for frame in container.decode(audio=0):
+            frame.pts = None
+            for resampled in resampler.resample(frame):
+                chunks.append(resampled.to_ndarray().flatten())
+        container.close()
+        if not chunks:
+            raise RuntimeError("No audio frames decoded")
+        return np.concatenate(chunks)
     except Exception as e:
         raise RuntimeError(f"Failed to load audio: {e}")
-
-    return np.frombuffer(out, np.float32).flatten()
 
 
 def clean_path(path_str):

@@ -117,7 +117,7 @@ def main():
     if n_gpus < 1:
         print("NO GPU DETECTED: falling back to CPU - this may take a while")
         n_gpus = 1
-    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
     logger = utils.get_logger(hps.model_dir)
 
@@ -147,7 +147,7 @@ def main():
 
 def run(rank, n_gpus, hps, logger: logging.Logger):
     global global_step
-    # Re-initialize logger in worker process (handlers don't survive mp.Process)
+    os.environ["USE_LIBUV"] = "0"
     logger = utils.get_logger(hps.model_dir)
     if rank == 0:
         logger.info(hps)
@@ -155,8 +155,12 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
         writer = SummaryWriter(log_dir=hps.model_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
 
+    port = os.environ.get("MASTER_PORT", "29500")
     dist.init_process_group(
-        backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
+        backend="gloo",
+        init_method=f"tcp://127.0.0.1:{port}",
+        world_size=n_gpus,
+        rank=rank,
     )
     torch.manual_seed(hps.train.seed)
     if torch.cuda.is_available():

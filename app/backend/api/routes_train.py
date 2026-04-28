@@ -35,9 +35,8 @@ from fastapi.responses import FileResponse
 async def stream_dataset_audio(path: str):
     """Stream an audio file from the dataset directory for preview playback."""
     datasets_root = Path(str(TEMP_DIR)) / "datasets"
-    if Path(path).is_absolute():
-        raise HTTPException(403, "Access denied")
-    file_path = datasets_root / path
+    p = Path(path)
+    file_path = p if p.is_absolute() else datasets_root / path
     if not file_path.resolve().is_relative_to(datasets_root.resolve()):
         raise HTTPException(403, "Access denied")
 
@@ -514,6 +513,52 @@ async def _log_callback_factory(task_id: str):
     return callback
 
 
+async def _background_range_detection(exp_name: str):
+    """Run range detection for all trained weights in a separate subprocess (fire-and-forget)."""
+    import sys
+    from app.backend.config import RVC_ROOT
+
+    weights_dir = Path(str(RVC_ROOT)) / "assets" / "weights"
+    all_weights = sorted(weights_dir.glob(f"{exp_name}*.pth"))
+    if not all_weights:
+        return
+
+    python = sys.executable
+    rvc_root = str(RVC_ROOT)
+    project_root = str(Path(rvc_root).parent.parent)
+
+    for wp in all_weights:
+        range_json = weights_dir / f"{wp.stem}_range.json"
+        if range_json.exists():
+            continue
+        try:
+            script = (
+                "import sys, json; "
+                "sys.path.insert(0, sys.argv[1]); "
+                "from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper; "
+                "w = get_s2h_wrapper(); "
+                "r = w.detect_range(sys.argv[2], 60); "
+                "open(sys.argv[3], 'w', encoding='utf-8').write(json.dumps(r, indent=2))"
+            )
+            kwargs_sub: dict = {}
+            if sys.platform == "win32":
+                kwargs_sub["creationflags"] = 0x08000000
+            proc = await asyncio.create_subprocess_exec(
+                python, "-c", script, project_root, wp.name, str(range_json),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=rvc_root,
+                **kwargs_sub,
+            )
+            await proc.communicate()
+            if proc.returncode == 0:
+                logger.info(f"Range detection done: {wp.name}")
+            else:
+                logger.warning(f"Range detection failed: {wp.name}")
+        except Exception as e:
+            logger.warning(f"Range detection error for {wp.name}: {e}")
+
+
 async def _run_training(task_id: str, params: dict):
     """Run the full training pipeline in background."""
     task = _active_tasks.get(task_id)
@@ -532,8 +577,11 @@ async def _run_training(task_id: str, params: dict):
             flat_dir.mkdir(parents=True, exist_ok=True)
             await log_cb(f"[prepare] Collecting {len(explicit_files)} files into flat dir")
             copied = 0
+            input_dir_base = Path(params.get("input_dir", ""))
             for fp_str in explicit_files:
                 fp = Path(fp_str)
+                if not fp.is_absolute() and input_dir_base.is_dir():
+                    fp = input_dir_base / fp
                 if not fp.exists():
                     await log_cb(f"[prepare] Skipping missing: {fp.name}")
                     continue
@@ -572,6 +620,7 @@ async def _run_training(task_id: str, params: dict):
             "success": success,
             "status": task.status,
         })
+
     except Exception as e:
         logger.exception("Training pipeline failed")
         task.status = "error"
@@ -585,18 +634,16 @@ async def _run_training(task_id: str, params: dict):
             "status": "error",
         })
     finally:
-        # Auto-cleanup temp dirs (rvc_input_, import_train_, separated_)
-        datasets_dir = Path(str(TEMP_DIR)) / "datasets"
-        if datasets_dir.exists():
-            for d in datasets_dir.iterdir():
-                if d.is_dir() and any(
-                    d.name.startswith(p) for p in (f"rvc_input_{task_id}", "import_train_", "separated_")
-                ):
-                    try:
-                        shutil.rmtree(str(d))
-                        logger.info(f"Auto-cleaned temp dir: {d}")
-                    except OSError:
-                        pass
+        # Only cleanup the flat copy dir for this task.
+        # Keep import_train_* (user uploads) and separated_* (batch sep output)
+        # so retraining with same data works.
+        rvc_input_dir = Path(str(TEMP_DIR)) / "datasets" / f"rvc_input_{task_id}"
+        if rvc_input_dir.exists():
+            try:
+                shutil.rmtree(str(rvc_input_dir))
+                logger.info(f"Auto-cleaned temp dir: {rvc_input_dir}")
+            except OSError:
+                pass
 
 
 async def _run_single_step(task_id: str, params: dict):

@@ -761,6 +761,14 @@ class RVCTrainWrapper:
         f0_method = params.get("f0_method", "rmvpe")
         input_dir = params.get("input_dir", "")
 
+        # Clear old checkpoints + exported weights so training starts fresh
+        exp_dir_path = EXPERIMENTS_DIR / exp_name
+        for old_ckpt in list(exp_dir_path.glob("G_*.pth")) + list(exp_dir_path.glob("D_*.pth")):
+            old_ckpt.unlink(missing_ok=True)
+        weights_dir = Path(self._rvc_root) / "assets" / "weights"
+        for old_w in list(weights_dir.glob(f"{exp_name}*.pth")) + list(weights_dir.glob(f"{exp_name}*_range.json")):
+            old_w.unlink(missing_ok=True)
+
         # Step 1: Preprocess
         if log_callback:
             await log_callback("=" * 50)
@@ -841,7 +849,57 @@ class RVCTrainWrapper:
             return False
 
         # Export model
-        await self.export_model(exp_name, params.get("export_dir"), log_callback=log_callback)
+        exported_path = await self.export_model(exp_name, params.get("export_dir"), log_callback=log_callback)
+
+        # Range detection in subprocess (safe from CUDA crashes)
+        weights_dir = Path(self._rvc_root) / "assets" / "weights"
+        all_weights = sorted(weights_dir.glob(f"{exp_name}*.pth"))
+        to_test = [w for w in all_weights if not (weights_dir / f"{w.stem}_range.json").exists()]
+        if to_test:
+            if log_callback:
+                await log_callback("=" * 50)
+                await log_callback(f"Range Detection ({len(to_test)} model{'s' if len(to_test) > 1 else ''})")
+                await log_callback("=" * 50)
+            python = self._get_python_executable()
+            script = (
+                "import sys, json; "
+                "sys.path.insert(0, sys.argv[1]); "
+                "from app.backend.wrappers.s2h_wrapper import get_s2h_wrapper; "
+                "w = get_s2h_wrapper(); "
+                "r = w.detect_range(sys.argv[2], 60); "
+                "open(sys.argv[3], 'w', encoding='utf-8').write(json.dumps(r, indent=2)); "
+                "print(r.get('comfort_label', '?'))"
+            )
+            kwargs_sub: dict = {}
+            if sys.platform == "win32":
+                kwargs_sub["creationflags"] = 0x08000000
+            for i, wp in enumerate(to_test):
+                rj = weights_dir / f"{wp.stem}_range.json"
+                if log_callback:
+                    await log_callback(f"[range] ({i+1}/{len(to_test)}) Testing {wp.name}...")
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        python, "-c", script,
+                        str(Path(self._rvc_root).parent.parent),
+                        wp.name, str(rj),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=self._rvc_root,
+                        env=self._build_env(),
+                        **kwargs_sub,
+                    )
+                    stdout, stderr = await proc.communicate()
+                    if proc.returncode == 0:
+                        label = stdout.decode("utf-8", errors="replace").strip()
+                        if log_callback:
+                            await log_callback(f"[range] ({i+1}/{len(to_test)}) {wp.name}: {label}")
+                    else:
+                        err = stderr.decode("utf-8", errors="replace").strip().split("\n")[-1]
+                        if log_callback:
+                            await log_callback(f"[range] ({i+1}/{len(to_test)}) {wp.name}: failed — {err}")
+                except Exception as e:
+                    if log_callback:
+                        await log_callback(f"[range] {wp.name}: error — {e}")
 
         task.status = "completed"
         if log_callback:

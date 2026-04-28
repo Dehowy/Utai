@@ -67,8 +67,10 @@ function TrainFlow() {
     x: number; y: number; nodeId: string | null; edgeId: string | null
   } | null>(null)
   const [modelManagerOpen, setModelManagerOpen] = useState(false)
-  const [reportOpen, setReportOpen] = useState(false)
-  const [reportData, setReportData] = useState({ expName: '', success: false, startTime: 0 })
+  const reportOpen = useTrainingStore((s) => s.reportOpen)
+  const reportData = useTrainingStore((s) => s.reportData)
+  const openReport = useTrainingStore((s) => s.openReport)
+  const closeReport = useTrainingStore((s) => s.closeReport)
   const [confirmClear, setConfirmClear] = useState(false)
   const activeTaskId = useTrainingStore((s) => s.activeTaskId)
   const logs = useTrainingStore((s) => s.logs)
@@ -438,8 +440,7 @@ function TrainFlow() {
                   })
                   setActiveTaskId(null)
                   ws.close()
-                  setReportData({ expName: modelName, success: msg.success, startTime: trainingStartTime })
-                  setReportOpen(true)
+                  openReport({ expName: modelName, success: msg.success, startTime: trainingStartTime })
                   if (msg.success) resolve()
                   else reject(new Error('Training failed'))
                 }
@@ -538,7 +539,7 @@ function TrainFlow() {
       <ModelManager open={modelManagerOpen} onClose={() => setModelManagerOpen(false)} />
       <TrainingReportModal
         open={reportOpen}
-        onClose={() => setReportOpen(false)}
+        onClose={() => closeReport()}
         expName={reportData.expName}
         success={reportData.success}
         startTime={reportData.startTime}

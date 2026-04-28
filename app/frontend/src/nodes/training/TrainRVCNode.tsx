@@ -8,9 +8,11 @@ import {
   stopTraining,
   connectTraining,
   getPretrainedModels,
+  getExperiments,
   browseFolderAuto,
 } from '../../api/client'
 import { UtaiSelect } from '../../components/UtaiSelect'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 
 export function TrainRVCNode({ id, data }: NodeProps) {
   const { t } = useTranslation()
@@ -25,6 +27,7 @@ export function TrainRVCNode({ id, data }: NodeProps) {
   const params = (data as any)?.params || {}
   const [pretrained, setPretrained] = useState<{ G: string[]; D: string[] }>({ G: [], D: [] })
   const [expanded, setExpanded] = useState(false)
+  const [confirmReplace, setConfirmReplace] = useState<((ok: boolean) => void) | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -112,6 +115,19 @@ export function TrainRVCNode({ id, data }: NodeProps) {
     }
 
     addLog(`[rvc-train] Input: ${inputFiles.length} files from ${inputDir}`)
+    const trainingStart = Date.now()
+
+    const experiments = await getExperiments().catch(() => [])
+    if (experiments.some((e: any) => e.name === modelName)) {
+      const confirmed = await new Promise<boolean>((resolve) => {
+        setConfirmReplace(() => resolve)
+      })
+      setConfirmReplace(null)
+      if (!confirmed) {
+        addLog(`[rvc-train] Cancelled: user chose not to replace "${modelName}"`)
+        return
+      }
+    }
 
     setNodeState(id, { status: 'running', progress: 0, message: t('train.starting') })
     setLogPanelOpen(true)
@@ -161,6 +177,11 @@ export function TrainRVCNode({ id, data }: NodeProps) {
           setActiveTaskId(null)
           wsRef.current = null
           ws.close()
+          useTrainingStore.getState().openReport({
+            expName: params.model_name || '',
+            success: msg.success,
+            startTime: trainingStart,
+          })
         }
       })
 
@@ -379,6 +400,13 @@ export function TrainRVCNode({ id, data }: NodeProps) {
 
       <Handle type="source" position={Position.Right} id="model"
         className="utai-handle" style={{ background: 'var(--accent-pink)' }} />
+
+      <ConfirmDialog
+        open={!!confirmReplace}
+        message={`"${params.model_name || ''}" ${t('train.alreadyExists') || 'already exists. Replace existing model?'}`}
+        onConfirm={() => { if (confirmReplace) confirmReplace(true) }}
+        onCancel={() => { if (confirmReplace) confirmReplace(false) }}
+      />
     </TrainNodeShell>
   )
 }

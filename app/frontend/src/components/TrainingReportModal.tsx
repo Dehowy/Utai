@@ -22,7 +22,7 @@ function parseLossPoints(logs: string[]): LossPoint[] {
     const epochMatch = line.match(/Train Epoch:\s*(\d+)/)
     if (epochMatch) currentEpoch = parseInt(epochMatch[1], 10)
 
-    const stepMatch = line.match(/^\[?INFO.*?\[(\d+),\s*[\d.e-]+\]/) || line.match(/^\[(\d+),\s*[\d.e-]+\]/)
+    const stepMatch = line.match(/\[(\d+),\s*[\d.e-]+\]/)
     if (stepMatch) currentStep = parseInt(stepMatch[1], 10)
 
     const lossMatch = line.match(/loss_disc=([\d.]+),\s*loss_gen=([\d.]+),\s*loss_fm=([\d.]+),\s*loss_mel=([\d.]+),\s*loss_kl=([\d.]+)/)
@@ -162,17 +162,28 @@ export function TrainingReportModal({ open, onClose, expName, success, startTime
       loss_kl: '#b86bff',
     }
 
-    // Line
-    ctx.strokeStyle = colors[metric] || '#ff6b9d'
+    // Line + dots
+    const color = colors[metric] || '#ff6b9d'
+    ctx.strokeStyle = color
+    ctx.fillStyle = color
     ctx.lineWidth = 1.5
-    ctx.beginPath()
+    const coords: { x: number; y: number }[] = []
     for (let i = 0; i < points.length; i++) {
       const x = pad.left + ((points[i].epoch - minE) / (maxE - minE || 1)) * plotW
       const y = pad.top + ((maxV - points[i][metric]) / (maxV - minV || 1)) * plotH
-      if (i === 0) ctx.moveTo(x, y)
-      else ctx.lineTo(x, y)
+      coords.push({ x, y })
     }
-    ctx.stroke()
+    if (coords.length > 1) {
+      ctx.beginPath()
+      ctx.moveTo(coords[0].x, coords[0].y)
+      for (let i = 1; i < coords.length; i++) ctx.lineTo(coords[i].x, coords[i].y)
+      ctx.stroke()
+    }
+    for (const { x, y } of coords) {
+      ctx.beginPath()
+      ctx.arc(x, y, 3, 0, Math.PI * 2)
+      ctx.fill()
+    }
 
     // Title
     ctx.fillStyle = '#e0e0ff'

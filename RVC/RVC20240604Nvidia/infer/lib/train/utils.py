@@ -443,6 +443,8 @@ def get_logger(model_dir, filename="train.log"):
     global logger
     logger = logging.getLogger(os.path.basename(model_dir))
     logger.setLevel(logging.DEBUG)
+    logger.handlers.clear()
+    logger.propagate = False
 
     formatter = logging.Formatter("%(asctime)s\t%(name)s\t%(levelname)s\t%(message)s")
     if not os.path.exists(model_dir):
