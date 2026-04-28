@@ -29,6 +29,8 @@ import {
   importVSTPlugin,
   deleteVSTPlugin,
   getRVCRangeStatus,
+  updateRVCRange,
+  resetRVCRange,
 } from '../api/client'
 import { emitModelsChanged } from '../utils/modelEvents'
 
@@ -73,8 +75,13 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
   const [vstImporting, setVstImporting] = useState(false)
   const [downloading, setDownloading] = useState<Record<string, number>>({})
   const [deleteMode, setDeleteMode] = useState(false)
+  const [settingsMode, setSettingsMode] = useState(false)
   const [deleting, setDeleting] = useState<Record<string, boolean>>({})
   const [confirmDelete, setConfirmDelete] = useState<{ name: string; action: () => void } | null>(null)
+  const [settingsModel, setSettingsModel] = useState<string | null>(null)
+  const [editComfortLow, setEditComfortLow] = useState(48)
+  const [editComfortHigh, setEditComfortHigh] = useState(72)
+  const [savingRange, setSavingRange] = useState(false)
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
   const [modalPos, setModalPos] = useState<{ x: number; y: number } | null>(null)
   const [scale, setScale] = useState(1)
@@ -82,6 +89,9 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
   const resizeRef = useRef<{ startY: number; startScale: number } | null>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pollRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
+
+  const selectedCatRef = useRef(selectedCat)
+  selectedCatRef.current = selectedCat
 
   const refreshSepData = useCallback(() => {
     getModelCategories().then(setCategories).catch(console.error)
@@ -150,6 +160,8 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
   useEffect(() => {
     if (!open) {
       setDeleteMode(false)
+      setSettingsMode(false)
+      setSettingsModel(null)
       setModalPos(null)
       setScale(1)
       setImportOpen(false)
@@ -160,9 +172,11 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     }
   }, [open])
 
-  // Exit delete mode when switching section
+  // Exit delete/settings mode when switching section
   useEffect(() => {
     setDeleteMode(false)
+    setSettingsMode(false)
+    setSettingsModel(null)
   }, [section])
 
   // ── Drag ──
@@ -218,7 +232,9 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
             clearInterval(interval)
             delete pollRef.current[modelName]
             setDownloading((prev) => { const n = { ...prev }; delete n[modelName]; return n })
-            refreshSepData()
+            getModelCategories().then(setCategories).catch(console.error)
+            const cat = selectedCatRef.current
+            if (cat) getModelsByCategory(cat).then(setModels).catch(console.error)
             emitModelsChanged()
           } else if (status.status === 'error') {
             clearInterval(interval)
@@ -231,7 +247,7 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
       }, 1000)
       pollRef.current[modelName] = interval
     } catch { /* ignore */ }
-  }, [refreshSepData])
+  }, [])
 
   // ── Separation delete ──
   const handleDeleteSep = useCallback(async (modelName: string) => {
@@ -379,6 +395,52 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
     })
   }, [refreshRvcData])
 
+  // ── MIDI helpers ──
+  const midiToNote = (midi: number) => {
+    const names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    return `${names[midi % 12]}${Math.floor(midi / 12) - 1}`
+  }
+
+  const handleOpenSettings = useCallback((m: any) => {
+    if (settingsModel === m.name) {
+      setSettingsModel(null)
+      return
+    }
+    setSettingsModel(m.name)
+    if (m.range) {
+      setEditComfortLow(m.range.comfort_low ?? 48)
+      setEditComfortHigh(m.range.comfort_high ?? 72)
+    }
+  }, [settingsModel])
+
+  const handleSaveRange = useCallback(async () => {
+    if (!settingsModel) return
+    setSavingRange(true)
+    try {
+      await updateRVCRange(settingsModel, editComfortLow, editComfortHigh)
+      refreshRvcData()
+      emitModelsChanged()
+    } catch (e: any) {
+      await utaiAlert(e?.message || 'Save failed')
+    }
+    setSavingRange(false)
+  }, [settingsModel, editComfortLow, editComfortHigh, refreshRvcData])
+
+  const handleResetRange = useCallback(async () => {
+    if (!settingsModel) return
+    setSavingRange(true)
+    try {
+      const data = await resetRVCRange(settingsModel)
+      setEditComfortLow(data.comfort_low)
+      setEditComfortHigh(data.comfort_high)
+      refreshRvcData()
+      emitModelsChanged()
+    } catch (e: any) {
+      await utaiAlert(e?.message || 'Reset failed')
+    }
+    setSavingRange(false)
+  }, [settingsModel, refreshRvcData])
+
   // ── DiffSinger download ──
   const dsPollRef = useRef<Record<string, ReturnType<typeof setInterval>>>({})
   const handleDsDownload = useCallback(async (modelId: string) => {
@@ -498,9 +560,18 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
           <div className="utai-modal__header" onMouseDown={handleHeaderMouseDown} style={{ cursor: 'grab' }}>
             <span>{t('models.title')}</span>
             <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {section === 'rvc' && (
+                <button
+                  className={`utai-btn utai-model-manager__delete-mode-btn ${settingsMode ? 'utai-model-manager__delete-mode-btn--active' : ''}`}
+                  style={settingsMode ? { borderColor: 'var(--accent-cyan)', background: 'var(--accent-cyan)', color: '#1a1a2e' } : { borderColor: 'var(--accent-cyan)', color: 'var(--accent-cyan)' }}
+                  onClick={() => { setSettingsMode(!settingsMode); setSettingsModel(null); if (!settingsMode) setDeleteMode(false) }}
+                >
+                  {settingsMode ? t('models.exitDelete') : t('models.settings')}
+                </button>
+              )}
               <button
                 className={`utai-btn utai-model-manager__delete-mode-btn ${deleteMode ? 'utai-model-manager__delete-mode-btn--active' : ''}`}
-                onClick={() => setDeleteMode(!deleteMode)}
+                onClick={() => { setDeleteMode(!deleteMode); if (!deleteMode) { setSettingsMode(false); setSettingsModel(null) } }}
               >
                 {deleteMode ? t('models.exitDelete') : t('models.manage')}
               </button>
@@ -760,31 +831,97 @@ export function ModelManager({ open, onClose, initialCategory, initialTab }: Mod
                   <>
                     {rvcModels.map((m) => {
                       const isDeleting = m.name in deleting
+                      const isSettingsOpen = settingsMode && settingsModel === m.name
                       return (
-                        <div key={m.name} className={`utai-model-manager__item ${deleteMode ? 'utai-model-manager__item--delete-mode' : ''}`}>
-                          <div className="utai-model-manager__item-info">
-                            <span className="utai-model-manager__item-name" style={{ color: '#9b6dff', fontSize: 14 }}>
-                              {m.name}
-                            </span>
-                            <span className="utai-model-manager__item-size" style={{ color: m.range ? '#e0e0e8' : 'var(--text-muted)', fontSize: 12, fontWeight: 400 }}>
-                              {m.range ? m.range.comfort_label : ''}{m.index_files?.length ? ` | ${m.index_files.length} idx` : ''}
-                            </span>
-                          </div>
-                          <div className="utai-model-manager__item-actions">
-                            {deleteMode ? (
-                              <div style={{ display: 'flex', gap: 4 }}>
-                                <button className="utai-btn" onClick={() => handleArchiveRvc(m.name)} disabled={isDeleting}
-                                  style={{ fontSize: 9, padding: '1px 6px', color: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}>
-                                  {t('models.archive')}
+                        <div key={m.name}>
+                          <div className={`utai-model-manager__item ${deleteMode ? 'utai-model-manager__item--delete-mode' : ''}`}>
+                            <div className="utai-model-manager__item-info">
+                              <span className="utai-model-manager__item-name" style={{ color: '#9b6dff', fontSize: 14 }}>
+                                {m.name}
+                              </span>
+                              <span className="utai-model-manager__item-size" style={{ color: m.range ? '#e0e0e8' : 'var(--text-muted)', fontSize: 12, fontWeight: 400 }}>
+                                {m.range ? m.range.comfort_label : ''}{m.index_files?.length ? ` | ${m.index_files.length} idx` : ''}
+                              </span>
+                            </div>
+                            <div className="utai-model-manager__item-actions">
+                              {deleteMode ? (
+                                <div style={{ display: 'flex', gap: 4 }}>
+                                  <button className="utai-btn" onClick={() => handleArchiveRvc(m.name)} disabled={isDeleting}
+                                    style={{ fontSize: 9, padding: '1px 6px', color: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}>
+                                    {t('models.archive')}
+                                  </button>
+                                  <button className="utai-btn utai-model-manager__delete-btn" onClick={() => handleDeleteRvc(m.name)} disabled={isDeleting}>
+                                    {isDeleting ? '...' : t('models.delete')}
+                                  </button>
+                                </div>
+                              ) : settingsMode ? (
+                                <button className="utai-btn" onClick={() => handleOpenSettings(m)}
+                                  style={{
+                                    fontSize: 9, padding: '1px 6px',
+                                    color: isSettingsOpen ? '#1a1a2e' : 'var(--accent-cyan)',
+                                    borderColor: 'var(--accent-cyan)',
+                                    background: isSettingsOpen ? 'var(--accent-cyan)' : 'transparent',
+                                  }}>
+                                  {t('models.settings')}
                                 </button>
-                                <button className="utai-btn utai-model-manager__delete-btn" onClick={() => handleDeleteRvc(m.name)} disabled={isDeleting}>
-                                  {isDeleting ? '...' : t('models.delete')}
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="utai-model-manager__installed">{t('models.installed')}</span>
-                            )}
+                              ) : (
+                                <span className="utai-model-manager__installed">{t('models.installed')}</span>
+                              )}
+                            </div>
                           </div>
+                          {isSettingsOpen && (
+                            <div style={{
+                              padding: '8px 12px',
+                              background: 'rgba(92, 224, 216, 0.04)',
+                              borderBottom: '1px solid var(--border-dim)',
+                            }}>
+                              {m.range ? (
+                                <>
+                                  <div style={{ fontSize: 10, color: 'var(--accent-cyan)', marginBottom: 6, fontFamily: 'var(--font-pixel)' }}>
+                                    {t('models.comfortRange')}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                    <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 32 }}>Low</span>
+                                    <input type="range"
+                                      min={m.range.range_low} max={editComfortHigh - 1}
+                                      value={editComfortLow}
+                                      onChange={(e) => setEditComfortLow(Number(e.target.value))}
+                                      style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
+                                    />
+                                    <span style={{ fontSize: 11, color: '#e0e0e8', minWidth: 36, textAlign: 'right', fontFamily: 'var(--font-pixel)' }}>
+                                      {midiToNote(editComfortLow)}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                                    <span style={{ fontSize: 10, color: 'var(--text-muted)', minWidth: 32 }}>High</span>
+                                    <input type="range"
+                                      min={editComfortLow + 1} max={m.range.range_high}
+                                      value={editComfortHigh}
+                                      onChange={(e) => setEditComfortHigh(Number(e.target.value))}
+                                      style={{ flex: 1, accentColor: 'var(--accent-cyan)' }}
+                                    />
+                                    <span style={{ fontSize: 11, color: '#e0e0e8', minWidth: 36, textAlign: 'right', fontFamily: 'var(--font-pixel)' }}>
+                                      {midiToNote(editComfortHigh)}
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 6 }}>
+                                    <button className="utai-btn" onClick={handleResetRange} disabled={savingRange}
+                                      style={{ fontSize: 9, padding: '2px 10px', color: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}>
+                                      Reset
+                                    </button>
+                                    <button className="utai-btn" onClick={handleSaveRange} disabled={savingRange}
+                                      style={{ fontSize: 9, padding: '2px 10px', color: 'var(--accent-green)', borderColor: 'var(--accent-green)' }}>
+                                      {savingRange ? '...' : t('dialog.confirm')}
+                                    </button>
+                                  </div>
+                                </>
+                              ) : (
+                                <div style={{ fontSize: 10, color: 'var(--text-muted)', textAlign: 'center', padding: 8 }}>
+                                  {t('models.noRangeData')}
+                                </div>
+                              )}
+                            </div>
+                          )}
                         </div>
                       )
                     })}

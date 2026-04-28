@@ -103,8 +103,15 @@ export default function TrackEffectsPanel() {
     fontSize: 9, padding: '1px 6px', cursor: 'pointer', fontFamily: 'var(--font-pixel)',
   });
 
+  const isAudioFxRendering = useSynthStore(s => !!s.audioFxRendering[trackIdx]);
+
   return (
-    <div style={{ padding: '6px 10px' }}>
+    <div style={{ padding: '6px 10px', opacity: isAudioFxRendering ? 0.5 : 1, pointerEvents: isAudioFxRendering ? 'none' : 'auto' }}>
+      {isAudioFxRendering && (
+        <div style={{ textAlign: 'center', padding: '8px 0', fontSize: 11, fontFamily: 'var(--font-pixel)', color: 'var(--accent-purple)' }}>
+          {t('synth.renderingEffects', 'Rendering effects...')}
+        </div>
+      )}
       {/* Scope filter tabs */}
       <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginBottom: 6 }}>
         <button style={tabStyle(scopeFilter === 'track')} onClick={() => setScopeFilter('track')}>Track</button>
@@ -173,14 +180,26 @@ export default function TrackEffectsPanel() {
           </button>
           {addMenuOpen && (
             <>
-              <div style={{ position: 'fixed', inset: 0, zIndex: 900 }} onClick={() => setAddMenuOpen(false)} />
+              <div style={{ position: 'fixed', inset: 0, zIndex: 900 }} onMouseDown={() => setAddMenuOpen(false)} />
               <div style={{
-                position: 'absolute', right: 0, top: '100%', zIndex: 901,
+                position: 'fixed', right: 16, zIndex: 901,
                 background: 'var(--bg-panel)', border: '1px solid var(--border-mid)',
                 minWidth: 150, padding: 4,
+              }} ref={(el) => {
+                if (!el) return;
+                const btn = el.previousElementSibling?.previousElementSibling as HTMLElement;
+                if (btn) {
+                  const r = btn.getBoundingClientRect();
+                  el.style.top = `${r.bottom + 2}px`;
+                  el.style.right = `${window.innerWidth - r.right}px`;
+                }
               }}>
                 {(Object.entries(RENDER_EFFECTS) as [RenderEffectType, any][])
-                  .filter(([type]) => type !== 'panner')
+                  .filter(([type]) => {
+                    if (type === 'panner') return false;
+                    if ((type === 'world_pitch' || type === 'warp_pitch') && track?.track_type !== 'audio') return false;
+                    return true;
+                  })
                   .map(([type, def]) => (
                   <button
                     key={type}

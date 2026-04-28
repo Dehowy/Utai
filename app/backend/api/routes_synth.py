@@ -94,11 +94,15 @@ async def s2h_render(
     mute_strategy: str = Form("auto"),
     index_rate: float = Form(0.75),
     affine_transform: bool = Form(False),
+    cosine_index: bool = Form(True),
+    model_f0: bool = Form(False),
 ):
     """Render notes via Score2HuBERT → RVC → post mute pipeline.
 
     notes: JSON array of {position, duration, tone, lyric}
     affine_transform: if True, use affine pitch transform for range extension
+    cosine_index: if True, use L2-normalized cosine index retrieval (improved)
+    model_f0: if True, model predicts F0 instead of using pitch curve data
     """
     from fastapi import HTTPException
 
@@ -139,6 +143,8 @@ async def s2h_render(
             index_rate=index_rate,
             affine_transform=affine_transform,
             range_data=range_data,
+            cosine_index=cosine_index,
+            model_f0=model_f0,
         )
     except (FileNotFoundError, ValueError) as e:
         logger.error(f"S2H render error: {e}")
@@ -348,10 +354,16 @@ async def force_stop():
 
 @router.get("/logs")
 async def get_logs(limit: int = 50):
-    """Get recent synth backend log entries (newest first)."""
+    """Get recent synth backend log entries (chronological order)."""
     entries = list(SYNTH_LOG_BUFFER)[-limit:]
-    entries.reverse()
     return {"logs": entries}
+
+
+@router.delete("/logs")
+async def clear_logs():
+    """Clear all log entries."""
+    SYNTH_LOG_BUFFER.clear()
+    return {"success": True}
 
 
 # ══════════════════════════════════════════════════════════════
@@ -552,6 +564,7 @@ async def autosave_project(req: ProjectSaveRequest):
             "project": req.project,
             "trackEffects": req.trackEffects,
             "settings": req.settings,
+            "logs": list(SYNTH_LOG_BUFFER),
         }, ensure_ascii=False)
         (AUTOSAVE_DIR / "state.json").write_text(state, encoding="utf-8")
         buffer_ids = [wp.get("buffer_id") for wp in req.project.get("wave_parts", []) if wp.get("buffer_id")]
@@ -584,6 +597,11 @@ async def load_autosave():
                     samples, sr = sf.read(str(wav_path), dtype="float32")
                     audio = AudioData(samples=samples.astype(np.float32), sample_rate=sr, name=bid)
                     buffer_manager.store(audio, force_id=bid)
+        saved_logs = state.get("logs", [])
+        if saved_logs:
+            SYNTH_LOG_BUFFER.clear()
+            for entry in saved_logs:
+                SYNTH_LOG_BUFFER.append(entry)
         return {
             "available": True,
             "project": project,
@@ -733,3 +751,191 @@ def _mix_project_audio(project: dict, track_audio_urls: dict, target_sr: int) ->
             mixed[1, start:end] += clip[1] * r_gain
 
     return mixed.T
+
+
+def _resample_channels(data: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
+    """Resample (channels, samples) array. soxr → numpy lerp fallback."""
+    try:
+        import soxr
+        return np.stack([soxr.resample(data[ch], sr_in, sr_out) for ch in range(data.shape[0])])
+    except ImportError:
+        ratio = sr_out / sr_in
+        out_len = int(data.shape[-1] * ratio)
+        x_old = np.linspace(0, 1, data.shape[-1], dtype=np.float32)
+        x_new = np.linspace(0, 1, out_len, dtype=np.float32)
+        return np.stack([np.interp(x_new, x_old, data[ch]) for ch in range(data.shape[0])])
+
+
+# ── Isolated export-mix endpoint ──
+# Receives vocal/instrument track audio as uploaded blobs + project metadata.
+# Audio tracks are read from buffer_manager (already on the server).
+# Mixes everything into a single stereo WAV and returns it.
+# Does NOT touch any existing endpoint, store, or render logic.
+
+@router.post("/project/export-mix")
+async def export_mix(
+    project_json: str = Form(...),
+    files: list[UploadFile] = File(default=[]),
+):
+    """Mix uploaded track blobs + audio-track buffers → stereo WAV download."""
+    import tkinter as tk
+    from tkinter import filedialog
+
+    meta = json.loads(project_json)
+    project = meta["project"]
+    track_blobs = meta.get("trackBlobs", {})  # {trackIndex: {position_ticks, volume, pan}}
+    target_sr = meta.get("sample_rate", 44100)
+    fmt = meta.get("format", "wav")
+    bit_depth = meta.get("bit_depth", 24)
+
+    tracks = project.get("tracks", [])
+    bpm = project.get("tempos", [{}])[0].get("bpm", 120)
+    resolution = 480
+    tps = bpm / 60 * resolution
+    has_solo = any(t.get("solo") for t in tracks)
+
+    # Build file lookup: "track_{idx}" → UploadFile
+    file_map: dict[str, UploadFile] = {}
+    for f in files:
+        if f.filename and f.filename.startswith("track_"):
+            file_map[f.filename.split(".")[0]] = f
+
+    max_samples = 0
+    segments: list[tuple[np.ndarray, int, float, float]] = []
+
+    # 1) Vocal / instrument tracks from uploaded blobs
+    for idx_str, blob_meta in track_blobs.items():
+        idx = int(idx_str)
+        track = tracks[idx] if idx < len(tracks) else None
+        if not track:
+            continue
+        muted = (not track.get("solo")) if has_solo else track.get("mute", False)
+        if muted:
+            continue
+
+        key = f"track_{idx}"
+        uf = file_map.get(key)
+        if not uf:
+            continue
+
+        raw_bytes = await uf.read()
+        audio_data, sr = sf.read(io.BytesIO(raw_bytes), dtype="float32")
+        if audio_data.ndim == 1:
+            audio_data = audio_data[np.newaxis, :]
+        else:
+            audio_data = audio_data.T  # (channels, samples)
+
+        start_sec = blob_meta.get("position_ticks", 0) / tps
+        start_sample = int(start_sec * target_sr)
+
+        if sr != target_sr:
+            audio_data = _resample_channels(audio_data, sr, target_sr)
+
+        track_vol = 10 ** (track.get("volume", 0) / 20) if track.get("volume", 0) > -24 else 0
+        clip_vol_db = blob_meta.get("volume", 0)
+        clip_vol = 10 ** (clip_vol_db / 20) if clip_vol_db > -24 else (0 if clip_vol_db <= -24 else 1)
+        audio_data = audio_data * track_vol * clip_vol
+
+        end_sample = start_sample + audio_data.shape[-1]
+        if end_sample > max_samples:
+            max_samples = end_sample
+        segments.append((audio_data, start_sample, track.get("pan", 0), blob_meta.get("pan", 0)))
+
+    # 2) Audio tracks from buffer_manager (same logic as _mix_project_audio)
+    for wp in project.get("wave_parts", []):
+        bid = wp.get("buffer_id")
+        if not bid:
+            continue
+        audio = buffer_manager.get(bid)
+        if not audio:
+            continue
+        track_idx = wp.get("track_no", 0)
+        track = tracks[track_idx] if track_idx < len(tracks) else None
+        muted = (not track.get("solo")) if has_solo else (track.get("mute", False) if track else False)
+        if muted:
+            continue
+
+        sr = audio.sample_rate
+        samples = audio.samples
+        if samples.ndim == 1:
+            samples = samples[np.newaxis, :]
+
+        skip_samples = int((wp.get("skip", 0) / 1000) * sr)
+        dur_samples = int((wp.get("file_duration_ms", 0) / 1000) * sr)
+        clip = samples[:, skip_samples:skip_samples + dur_samples]
+
+        start_sec = wp.get("position", 0) / tps
+        start_sample = int(start_sec * target_sr)
+
+        if sr != target_sr:
+            clip = _resample_channels(clip, sr, target_sr)
+
+        track_vol = 10 ** ((track.get("volume", 0) if track else 0) / 20) if (track and track.get("volume", 0) > -24) else 0
+        clip_vol = 10 ** ((wp.get("volume", 0) or 0) / 20) if (wp.get("volume", 0) or 0) > -24 else (0 if (wp.get("volume", 0) or 0) <= -24 else 1)
+        clip = clip * track_vol * clip_vol
+
+        end_sample = start_sample + clip.shape[-1]
+        if end_sample > max_samples:
+            max_samples = end_sample
+        segments.append((clip, start_sample, track.get("pan", 0) if track else 0, wp.get("pan", 0) or 0))
+
+    if max_samples == 0:
+        raise HTTPException(400, "No audio to export — render tracks first")
+
+    # Mix
+    mixed = np.zeros((2, max_samples), dtype=np.float32)
+    for clip, start, track_pan, clip_pan in segments:
+        pan = max(-100, min(100, track_pan + clip_pan)) / 100
+        l_gain = min(1.0, 1.0 - pan)
+        r_gain = min(1.0, 1.0 + pan)
+        end = start + clip.shape[-1]
+        if clip.shape[0] == 1:
+            mixed[0, start:end] += clip[0] * l_gain
+            mixed[1, start:end] += clip[0] * r_gain
+        else:
+            mixed[0, start:end] += clip[0] * l_gain
+            mixed[1, start:end] += clip[1] * r_gain
+
+    mixed_out = mixed.T  # (samples, 2)
+
+    # Save dialog
+    fmt_ext = {"wav": ".wav", "mp3": ".mp3", "flac": ".flac", "ogg": ".ogg"}
+    ext = fmt_ext.get(fmt, ".wav")
+
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    path = filedialog.asksaveasfilename(
+        title="Export Audio",
+        defaultextension=ext,
+        filetypes=[(f"{fmt.upper()} Audio", f"*{ext}"), ("All Files", "*.*")],
+        initialfile=f"{project.get('name', 'export')}{ext}",
+    )
+    root.destroy()
+    if not path:
+        return {"cancelled": True}
+
+    try:
+        out_path = Path(path)
+        subtype_map = {"wav": {16: "PCM_16", 24: "PCM_24", 32: "FLOAT"}, "flac": {16: "PCM_16", 24: "PCM_24"}}
+        subtype = subtype_map.get(fmt, {}).get(bit_depth, "PCM_16")
+
+        if fmt == "mp3":
+            tmp_wav = TEMP_DIR / "export_mix_tmp.wav"
+            sf.write(str(tmp_wav), mixed_out, target_sr)
+            import subprocess
+            subprocess.run(["ffmpeg", "-y", "-i", str(tmp_wav), "-b:a", "320k", str(out_path)], check=True, capture_output=True)
+            tmp_wav.unlink(missing_ok=True)
+        elif fmt == "ogg":
+            tmp_wav = TEMP_DIR / "export_mix_tmp.wav"
+            sf.write(str(tmp_wav), mixed_out, target_sr)
+            import subprocess
+            subprocess.run(["ffmpeg", "-y", "-i", str(tmp_wav), "-c:a", "libvorbis", "-q:a", "6", str(out_path)], check=True, capture_output=True)
+            tmp_wav.unlink(missing_ok=True)
+        else:
+            sf.write(str(out_path), mixed_out, target_sr, subtype=subtype)
+
+        return {"success": True, "path": str(out_path)}
+    except Exception as e:
+        logger.exception("Failed to export-mix audio")
+        raise HTTPException(500, str(e))

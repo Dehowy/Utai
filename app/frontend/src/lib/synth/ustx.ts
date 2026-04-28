@@ -79,28 +79,26 @@ function parseTrack(raw: any): UTrack {
   };
 }
 
-// Non-vocal note lyrics (breath, rest, sustain markers) that should be
-// stripped on USTX import — we can't synthesize these and they produce
-// garbage phonemes if sent to the S2H pipeline.
-const SPECIAL_LYRICS = new Set([
-  'R', 'r', '-', '+', '+~', '++',
-  'br', 'BR', 'breath', 'Breath',
-  'AP', 'ap', 'SP', 'sp',
-  'pau', 'sil',
-]);
+const SUSTAIN_LYRICS = new Set(['+', '+~', '++']);
 
 function parseVoicePart(raw: any): UVoicePart {
   const allNotes: any[] = raw.notes ?? [];
-  const filtered = allNotes.filter(
-    (n: any) => !SPECIAL_LYRICS.has((n?.lyric ?? '').trim()),
-  );
+  const parsed = allNotes.map(parseNote);
+  let prevLyric = 'a';
+  for (const n of parsed) {
+    if (SUSTAIN_LYRICS.has(n.lyric)) {
+      n.lyric = prevLyric;
+    } else {
+      prevLyric = n.lyric;
+    }
+  }
   return {
     name: raw.name ?? 'Part1',
     comment: raw.comment ?? '',
     track_no: raw.track_no ?? 0,
     position: raw.position ?? 0,
     duration: raw.duration ?? 1920,
-    notes: filtered.map(parseNote),
+    notes: parsed,
     curves: raw.curves ?? [],
   };
 }

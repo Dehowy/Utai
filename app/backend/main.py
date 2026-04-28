@@ -5,8 +5,32 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 import sys
 from pathlib import Path
+
+# ── Windows: suppress ALL console popups from subprocesses ──
+# Must run before any other import that might spawn processes.
+if sys.platform == "win32":
+    _CREATE_NO_WINDOW = 0x08000000
+
+    _OrigPopen = subprocess.Popen
+    class _SilentPopen(_OrigPopen):
+        def __init__(self, *args, **kwargs):
+            kwargs["creationflags"] = kwargs.get("creationflags", 0) | _CREATE_NO_WINDOW
+            if "startupinfo" not in kwargs:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0
+                kwargs["startupinfo"] = si
+            super().__init__(*args, **kwargs)
+    subprocess.Popen = _SilentPopen
+
+    _orig_system = os.system
+    def _silent_system(cmd):
+        r = subprocess.run(cmd, shell=True)
+        return r.returncode
+    os.system = _silent_system
 
 # Windows requires ProactorEventLoop for asyncio.create_subprocess_exec
 # uvicorn --reload may default to SelectorEventLoop which doesn't support subprocesses

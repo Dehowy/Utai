@@ -1,0 +1,196 @@
+# Score2HuBERT — Phase 2: Multilingual Fine-tuning (deterministic mode)
+#
+# Init from Plan C best.pt (Chinese pre-training, det mode).
+# Fine-tunes on multi_lang_4 = ace_opencpop + GTSinger {zh, ja, en}, including
+# both singing AND paired speech samples (singing_ratio mixed across batch).
+#
+# Why include speech: the user wants the model to handle rap / spoken-segment
+# parts of songs (rhythmic but no melodic notes). Speech samples activate the
+# rap_head in F0Predictor (which was untrained in Plan C since ACE-Opencpop is
+# 100% singing).
+#
+# Plan C lessons applied (see project_score2hubert_ema_pitfall.md):
+#   - mode: deterministic (det_head replaces flow_decoder)
+#   - EMA disabled (warm-start + new module activation pathology — see EMA pitfall)
+#   - 4-layer encoder (matches Plan C, NOT the old 6-layer flow config)
+#   - phoneme_vocab 80 IPA tokens (NOW includes θ/ð for English)
+#
+# Phase 2 specific safeguards (analogous to Plan C fresh-init + warm backbone):
+#   - warmup_steps 1000 (was 500 in finetune_ja_det) — more fresh stuff to ramp
+#   - val_every 500, save_every 1500 — frequent checkpoints for diag_live_vs_ema spot checks
+#   - total_steps 25000 — bigger dataset (~104k samples) needs more passes
+#
+# Launch:
+#   venv/Scripts/python.exe scripts/train.py \
+#     --config configs/finetune_multi_det.yaml \
+#     --init-from checkpoints/pretrain_opencpop_det/best.pt
+
+model:
+  mode: deterministic       # Plan C — det head, bypass flow_decoder
+
+  encoder:
+    d_model: 512
+    n_layers: 4              # MUST match Plan C
+    n_heads: 8
+    d_ff: 2048
+    conv_kernel_size: 31
+    dropout: 0.1
+    phoneme_vocab_size: 80   # MUST match Plan C (IPA, NOT 512). θ/ð live at IDs 73/74.
+    max_pitch: 128
+    pitch_embed_dim: 256
+    use_relative_pos: true
+
+  flow_matching:
+    # Kept frozen, not used. Same shape as Plan C for state_dict compat.
+    d_hubert: 768
+    n_layers: 4
+    n_heads: 8
+    d_ff: 2048
+    d_cond: 512
+    dropout: 0.1
+    sigma_min: 1.0e-4
+    ot_ode: true
+    cfg:
+      enabled: false
+      drop_prob: 0.0
+      guidance_scale: 1.0
+
+  det_head:
+    d_hidden: 512            # MUST match Plan C
+    n_blocks: 4              # MUST match Plan C
+    kernel_size: 7
+    dropout: 0.1
+
+  f0_predictor:
+    hidden_dim: 384
+    conv_layers: 5
+    conv_kernel: 5
+    lstm_layers: 2
+    dropout: 0.1
+    # NOTE: rap_head exists in this module but was untrained in Plan C (ACE-Opencpop
+    # is all singing → singing_ratio==1 → rap_head never sees gradient). Phase 2
+    # is the first time it gets trained, via the GTSinger speech samples. Expect
+    # speech audio quality to lag singing in early training.
+
+  variance:
+    energy:
+      enabled: true
+      n_layers: 3
+      kernel_size: 3
+      hidden_dim: 256
+    breathiness:
+      enabled: true          # NEW for fine-tune — adds expression control
+      n_layers: 3
+      kernel_size: 3
+      hidden_dim: 256
+    voicing:
+      enabled: true
+      n_layers: 2
+      kernel_size: 3
+      hidden_dim: 256
+
+  duration_predictor:
+    enabled: false
+
+audio:
+  sample_rate: 16000
+  hop_length: 160
+  win_length: 400
+  n_fft: 512
+  target_sr: 44100
+
+hubert:
+  layer: 12
+  feature_dim: 768
+
+f0:
+  method: "rmvpe"
+  f0_min: 50.0
+  f0_max: 1100.0
+
+rvc_compensation:
+  enabled: false             # leave off for first Phase 2 run
+
+data:
+  # multi_lang_4 = ace_opencpop + gtsinger_zh + gtsinger_ja + gtsinger_en
+  # (with both singing and speech entries from GTSinger; ace_opencpop is 100% singing)
+  processed_dir: "data/processed/multi_lang_4"
+  val_ratio: 0.05
+  test_ratio: 0.05
+  max_frames: 1200
+  min_frames: 30
+  augmentation:
+    pitch_shift:
+      enabled: true
+      range_semitones: [-8, 8]      # narrower than Plan C's [-12,12] for fine-tune
+      prob: 0.5
+    time_stretch:
+      enabled: true
+      range: [0.93, 1.07]           # narrower than Plan C's [0.9,1.1]
+      prob: 0.25
+    noise:
+      enabled: false
+
+training:
+  optimizer:
+    type: "adamw"
+    lr: 7.0e-5                # ~0.5x Plan C's 1.5e-4 — gentle fine-tune of warm model
+    betas: [0.9, 0.98]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  scheduler:
+    type: "warmup_cosine"
+    warmup_steps: 1000        # BUMPED from 500 (Phase 1) → 1000 because Phase 2 has
+                              # MORE fresh things to ramp up: rap_head (was untrained),
+                              # θ/ð embeddings (new), and existing English-relevant IPA
+                              # tokens that got near-zero gradient flow during Chinese-only
+                              # Plan C training (e.g., ɹ which is rare in Chinese).
+    min_lr: 1.0e-6
+    total_steps: 25000        # bigger dataset (~104k) → more steps (was 15k for ja-only)
+  batch_size: 32              # same as Plan C, profiled safe
+  accumulate_grad: 1
+  num_workers: 4
+  persistent_workers: true
+  prefetch_factor: 4
+  max_steps: 25000
+  val_every: 500              # frequent val to catch any train/val divergence early
+  save_every: 1500            # checkpoints for diag_live_vs_ema spot checks
+  log_every: 50
+  loss:
+    det: 1.0                  # Plan C deterministic head loss
+    flow_matching: 0.0        # disabled, flow_decoder frozen
+    f0: 1.0
+    duration: 0.0
+    energy: 0.1
+    breathiness: 0.05         # enabled (was 0 in Plan C pre-training)
+    voicing: 0.05
+    reconstruction: 0.0       # disabled, det_head replaces it
+    multiscale_hubert:
+      enabled: false
+      scales: [1, 5, 10]
+      weight: 0.3
+  grad_clip: 1.0              # belt-and-suspenders for fresh modules with large early grads
+  ema:
+    enabled: false            # PLAN C LESSON — see project_score2hubert_ema_pitfall.md
+                              # The pathology is even more relevant here than in Plan C,
+                              # because Phase 2 has MORE fresh things being added (rap_head
+                              # activation + new embeddings + heavy distribution shift).
+    decay: 0.9999
+  fp16: true
+  save_top_k: 3
+  monitor: "val/recon_l1"     # det_l1 logged under recon_l1 name (see Plan C trainer changes)
+
+inference:
+  flow_steps: 1               # not used in det mode
+  solver: "euler"
+  cfg_scale: 1.0
+  temperature: 1.0
+
+paths:
+  project_root: "."
+  rvc_root: "RVC/RVC20240604Nvidia"
+  hubert_model: "RVC/RVC20240604Nvidia/assets/hubert/hubert_base.pt"
+  rmvpe_model: "RVC/RVC20240604Nvidia/assets/rmvpe/rmvpe.pt"
+  rvc_weights_dir: "RVC/RVC20240604Nvidia/assets/weights"
+  checkpoint_dir: "checkpoints/finetune_multi_det"
+  log_dir: "logs/finetune_multi_det"

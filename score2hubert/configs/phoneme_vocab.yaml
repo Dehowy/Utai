@@ -1,0 +1,129 @@
+# Score2HuBERT - Unified Phoneme Vocabulary Reference
+# Covers Japanese + Chinese + special tokens
+# Index 0 is reserved for <pad>
+#
+# NOTE: This file is a human-readable reference. The actual vocabulary is
+# built programmatically by PhonemeVocab._build_default() in src/data/phoneme.py.
+# All phonemes get a language prefix at runtime (e.g., "a" → "ja_a" / "zh_a").
+# Collision between languages is avoided by the prefix, not by renaming.
+
+special:
+  - "<pad>"      # 0: padding
+  - "<sos>"      # 1: start of sequence
+  - "<eos>"      # 2: end of sequence
+  - "SP"         # 3: silence/pause
+  - "AP"         # 4: aspiration/breath (short)
+  - "br"         # 5: breath (long, between phrases)
+  - "<mask>"     # 6: mask token for CFG training
+
+# Japanese phonemes (based on OpenJTalk / DiffSinger-ja phoneme set)
+japanese:
+  vowels:
+    - "a"
+    - "i"
+    - "u"
+    - "e"
+    - "o"
+  consonants:
+    - "k"
+    - "s"
+    - "t"
+    - "n"
+    - "h"
+    - "m"
+    - "y"
+    - "r"
+    - "w"
+    - "g"
+    - "z"
+    - "d"
+    - "b"
+    - "p"
+    - "f"
+    - "j"
+    - "ch"
+    - "sh"
+    - "ts"
+    - "ry"
+    - "ky"
+    - "ny"
+    - "hy"
+    - "my"
+    - "gy"
+    - "by"
+    - "py"
+    - "dy"
+    - "ty"
+  special:
+    - "N"         # moraic nasal (ん)
+    - "cl"        # geminate consonant (っ)
+    - "pau"       # pause within word
+    - "sil"       # silence
+
+# Chinese phonemes (Opencpop / DiffSinger-zh pinyin-based)
+chinese:
+  initials:
+    - "b"
+    - "p"
+    - "m"
+    - "f"
+    - "d"
+    - "t"
+    - "n"
+    - "l"
+    - "g"
+    - "k"
+    - "h"
+    - "j"
+    - "q"
+    - "x"
+    - "zh"
+    - "ch"
+    - "sh"
+    - "r"
+    - "z"
+    - "c"
+    - "s"
+  finals:
+    - "a"
+    - "o"
+    - "e"
+    - "i"
+    - "u"
+    - "v"         # ü
+    - "ai"
+    - "ei"
+    - "ao"
+    - "ou"
+    - "an"
+    - "en"
+    - "ang"
+    - "eng"
+    - "ong"
+    - "er"
+    - "ia"
+    - "ie"
+    - "iao"
+    - "iu"
+    - "ian"
+    - "in"
+    - "iang"
+    - "ing"
+    - "iong"
+    - "ua"
+    - "uo"
+    - "uai"
+    - "ui"
+    - "uan"
+    - "un"
+    - "uang"
+    - "ueng"
+    - "ve"
+    - "van"
+    - "vn"
+
+# Language ID tokens (prepended to sequence for cross-lingual)
+language_ids:
+  - "<ja>"
+  - "<zh>"
+  - "<en>"

@@ -87,6 +87,13 @@ export const getRVCRangeStatus = (modelName: string) =>
   fetchJSON<any>(`/api/models/rvc/range-status/${encodeURIComponent(modelName)}`)
 export const getRVCRange = (modelName: string) =>
   fetchJSON<any>(`/api/models/rvc/range/${encodeURIComponent(modelName)}`)
+export const updateRVCRange = (modelName: string, comfortLow: number, comfortHigh: number) =>
+  fetchJSON<any>(`/api/models/rvc/range/${encodeURIComponent(modelName)}`, {
+    method: 'PUT',
+    body: JSON.stringify({ comfort_low: comfortLow, comfort_high: comfortHigh }),
+  })
+export const resetRVCRange = (modelName: string) =>
+  fetchJSON<any>(`/api/models/rvc/reset-range/${encodeURIComponent(modelName)}`, { method: 'POST' })
 
 // DiffSinger removed — replaced by Score2HuBERT. Stubs kept for compile compat.
 export const getDiffSingerModels = () => Promise.resolve([])
@@ -235,7 +242,13 @@ export async function uploadDataset(files: File[], expName: string) {
 export function connectTraining(taskId: string, onMessage: (msg: any) => void) {
   const wsBase = API_BASE.replace(/^http/, 'ws') || `ws://${window.location.host}`
   const ws = new WebSocket(`${wsBase}/api/train/ws/${taskId}`)
-  ws.onmessage = (e) => onMessage(JSON.parse(e.data))
+  ws.onmessage = (e) => {
+    try {
+      onMessage(JSON.parse(e.data))
+    } catch (err) {
+      console.error('Training WS parse error:', err)
+    }
+  }
   ws.onerror = (e) => console.error('Training WS error:', e)
   return ws
 }
@@ -279,6 +292,16 @@ export const openVSTEditor = (name: string) =>
 
 export const closeVSTEditor = (name: string) =>
   fetchJSON<any>(`/api/vst/editor/close/${encodeURIComponent(name)}`, { method: 'POST' })
+
+export const previewVSTNote = (pluginName: string, tone: number, velocity = 100, duration = 0.5) =>
+  fetch(`${API_BASE}/api/vst/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plugin_name: pluginName, tone, velocity, duration }),
+  }).then(r => {
+    if (!r.ok) throw new Error(`VST preview failed: ${r.status}`)
+    return r.blob()
+  })
 
 export const renderVST = (data: {
   plugin_name: string;
@@ -340,7 +363,7 @@ export async function importWorkflowAuto(): Promise<any> {
     })
     if (!filePath) return { status: 'cancelled' }
     if (filePath.endsWith('.utaiSynth')) {
-      const data = await fetchJSON<any>('/api/synth/project/open-path', { method: 'POST', body: JSON.stringify(filePath) })
+      const data = await fetchJSON<any>('/api/synth/project/open-path', { method: 'POST', body: JSON.stringify({ path: filePath }) })
       return { ...data, project_type: 'synth', path: filePath }
     }
     return fetchJSON<any>('/api/workflows/import-path', {

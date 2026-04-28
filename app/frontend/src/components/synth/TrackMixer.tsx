@@ -5,7 +5,7 @@ import { useSynthStore } from '../../store/synthStore';
 import { RULER_H, TRACK_LANE_H, TRACK_HEADER_W } from '../../lib/synth/arrangementEngine';
 import { RESOLUTION } from '../../types/ustx';
 import * as engine from '../../lib/synth/audioEngine';
-import { getRVCModels } from '../../api/client';
+import { getRVCModels, getVSTPlugins } from '../../api/client';
 
 const COLORS = ['#ff6b9d', '#5ce0d8', '#e8b84b', '#9b6dff', '#5dba5d', '#e8944b'];
 
@@ -87,10 +87,15 @@ export default function TrackMixer() {
   const affineTransform = useSynthStore(s => s.affineTransform);
   const trackAffineTransform = useSynthStore(s => s.trackAffineTransform);
   const setTrackAffineTransform = useSynthStore(s => s.setTrackAffineTransform);
+  const modelF0Global = useSynthStore(s => s.modelF0);
+  const trackModelF0 = useSynthStore(s => s.trackModelF0);
+  const setTrackModelF0 = useSynthStore(s => s.setTrackModelF0);
   const rvcListVersion = useSynthStore(s => s.rvcModelListVersion);
+  const setTrackPlugin = useSynthStore(s => s.setTrackPlugin);
   const [editingIdx, setEditingIdx] = useState<number | null>(null);
   const dragFrom = useRef(-1);
   const [rvcModels, setRvcModels] = useState<{ name: string; filename: string }[]>([]);
+  const [vstPlugins, setVstPlugins] = useState<{ name: string }[]>([]);
 
   useEffect(() => {
     getRVCModels().then(data => {
@@ -99,6 +104,7 @@ export default function TrackMixer() {
         range: m.range || undefined,
       })));
     }).catch(() => setRvcModels([]));
+    getVSTPlugins().then(setVstPlugins).catch(() => setVstPlugins([]));
   }, [rvcListVersion]);
 
   useEffect(() => {
@@ -341,6 +347,53 @@ export default function TrackMixer() {
                 </div>
               );
             })()}
+            {/* Row 2f: Model F0 (vocal only) */}
+            {tt === 'vocal' && trackLaneHeight >= 100 && (() => {
+              const on = trackModelF0[idx] ?? modelF0Global;
+              return (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer' }}
+                  onClick={e => { e.stopPropagation(); setTrackModelF0(idx, !on); }}
+                  onMouseDown={e => e.stopPropagation()}
+                >
+                  <div style={{
+                    width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+                    border: `1px solid ${on ? '#9b6dff' : '#3a3a5a'}`,
+                    background: on ? '#9b6dff' : 'transparent',
+                  }} />
+                  <span style={{
+                    fontSize: 9, fontFamily: 'var(--font-pixel)',
+                    color: on ? '#c4a8ff' : '#6a6a8a',
+                  }}>
+                    ModelF0
+                  </span>
+                </div>
+              );
+            })()}
+
+            {/* VST plugin selector (instrument tracks only) */}
+            {tt === 'instrument' && trackLaneHeight >= 56 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                <select
+                  value={track.plugin_name || ''}
+                  onClick={e => e.stopPropagation()}
+                  onChange={e => { e.stopPropagation(); setTrackPlugin(idx, e.target.value); }}
+                  title="VST Plugin"
+                  style={{
+                    flex: 1, width: 0,
+                    fontSize: 8, fontFamily: 'var(--font-pixel)',
+                    color: track.plugin_name ? '#e8b84b' : '#5a5a7a',
+                    background: '#1a1a32', border: `1px solid ${track.plugin_name ? '#e8b84b44' : '#2a2a4a'}`,
+                    borderRadius: 2, padding: '0 2px', height: 14,
+                    outline: 'none', cursor: 'pointer',
+                  }}
+                >
+                  <option value="">VST --</option>
+                  {vstPlugins.map(p => (
+                    <option key={p.name} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {/* Row 3: Volume */}
             <MixerSlider

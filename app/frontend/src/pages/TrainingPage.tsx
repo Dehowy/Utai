@@ -335,6 +335,7 @@ function TrainFlow() {
             setActiveTaskId(task_id)
 
             await new Promise<void>((resolve, reject) => {
+              let settled = false
               const ws = connectTraining(task_id, (msg) => {
                 if (msg.type === 'log') {
                   addLog(msg.message)
@@ -345,6 +346,7 @@ function TrainFlow() {
                     progress: msg.progress || 0,
                   })
                 } else if (msg.type === 'complete') {
+                  settled = true
                   setActiveTaskId(null)
                   if (msg.success) {
                     setNodeState(nodeId, {
@@ -364,6 +366,7 @@ function TrainFlow() {
                   ws.close()
                 }
               })
+              ws.onclose = () => { if (!settled) { setActiveTaskId(null); reject(new Error('Connection lost')) } }
             })
           } catch (err) {
             setNodeState(nodeId, { status: 'error', message: String(err) })
@@ -417,6 +420,7 @@ function TrainFlow() {
 
             // Wait for training to complete via WebSocket
             await new Promise<void>((resolve, reject) => {
+              let settled = false
               const ws = connectTraining(task_id, (msg) => {
                 if (msg.type === 'log') {
                   addLog(msg.message)
@@ -427,19 +431,20 @@ function TrainFlow() {
                     progress: msg.progress || 0,
                   })
                 } else if (msg.type === 'complete') {
+                  settled = true
                   setNodeState(nodeId, {
                     status: msg.success ? 'completed' : 'error',
                     message: msg.success ? 'Training complete' : 'Training failed',
                   })
                   setActiveTaskId(null)
                   ws.close()
-                  // Show training report modal
                   setReportData({ expName: modelName, success: msg.success, startTime: trainingStartTime })
                   setReportOpen(true)
                   if (msg.success) resolve()
                   else reject(new Error('Training failed'))
                 }
               })
+              ws.onclose = () => { if (!settled) { setActiveTaskId(null); reject(new Error('Connection lost')) } }
             })
           } catch (err) {
             setNodeState(nodeId, { status: 'error', message: String(err) })
@@ -625,7 +630,7 @@ function TrainFlow() {
             />
           )}
 
-          <div className="utai-counter">★ utai v0.1.0 — training</div>
+          <div className="utai-counter">★ utai v1.7.0 — training</div>
         </div>
 
         {/* Log panel (right) */}

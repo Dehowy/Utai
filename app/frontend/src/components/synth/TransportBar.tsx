@@ -10,6 +10,7 @@ import {
   trackNeedsRender,
   getDirtyTrackIndices,
   renderTracks,
+  createRenderAbort,
 } from '../../lib/synth/renderEngine';
 import WaveSurfer from 'wavesurfer.js';
 
@@ -87,12 +88,12 @@ export default function TransportBar() {
   const renderedUrl = useSynthStore(s => s.renderedUrl);
   const finalUrl = useSynthStore(s => s.finalUrl);
   const trackAudioUrls = useSynthStore(s => s.trackAudioUrls);
+  const waveFxSnapshot = useSynthStore(s => Object.keys(s.waveFxUrls).join(','));
   const renderError = useSynthStore(s => s.renderError);
   const renderStatus = useSynthStore(s => s.renderStatus);
 
   const waveRef = useRef<HTMLDivElement>(null);
   const wsRef = useRef<WaveSurfer | null>(null);
-  const autoRenderAbort = useRef<AbortController | null>(null);
 
   const bpm = project.tempos[0]?.bpm ?? 120;
   const ts = project.time_signatures[0];
@@ -196,10 +197,11 @@ export default function TransportBar() {
 
     for (const wp of project.wave_parts) {
       if (!wp.buffer_id) continue;
+      const fxUrl = useSynthStore.getState().waveFxUrls[wp.buffer_id];
       sources.push({
-        url: `/api/audio/${wp.buffer_id}`,
+        url: fxUrl || `/api/audio/${wp.buffer_id}`,
         startSec: wp.position / tps,
-        skipSec: (wp.skip || 0) / 1000,
+        skipSec: fxUrl ? 0 : (wp.skip || 0) / 1000,
         durSec: wp.file_duration_ms / 1000,
       });
     }
@@ -262,7 +264,7 @@ export default function TransportBar() {
         if (gen === mixAbort.current) ws.empty();
       }
     })();
-  }, [finalUrl, renderedUrl, trackAudioUrls, wavePartsFingerprint]);
+  }, [finalUrl, renderedUrl, trackAudioUrls, wavePartsFingerprint, waveFxSnapshot]);
 
   // Sync position → WaveSurfer
   useEffect(() => {
@@ -299,24 +301,19 @@ export default function TransportBar() {
       tracksToRender = getDirtyTrackIndices();
     }
 
-    // Block auto-render for vocal tracks missing RVC model
-    const missingModel = tracksToRender.filter(i => {
+    // Block if any vocal track is missing RVC model
+    const missingModel = tracksToRender.some(i => {
       const track = state.project.tracks[i];
-      return track?.track_type === 'vocal' && !state.trackRvcModel[i] && !state.rvcModel;
+      return track?.track_type === 'vocal' && !state.trackRvcModel[i];
     });
-    if (missingModel.length > 0) {
-      tracksToRender = tracksToRender.filter(i => !missingModel.includes(i));
-      if (tracksToRender.length === 0) {
-        state.setRenderError(t('synth.needRvcModel'));
-        state.setRenderStatus('error');
-        return;
-      }
+    if (missingModel) {
+      state.setRenderError(t('synth.needRvcModel'));
+      state.setRenderStatus('error');
+      return;
     }
 
     if (tracksToRender.length > 0 && (state.renderStatus as string) !== 'rendering') {
-      autoRenderAbort.current?.abort();
-      const ac = new AbortController();
-      autoRenderAbort.current = ac;
+      const ac = createRenderAbort();
       state.setRenderStatus('rendering');
       try {
         await renderTracks(tracksToRender, ac.signal);
@@ -328,7 +325,6 @@ export default function TransportBar() {
         useSynthStore.getState().setRenderError(`Auto-render: ${err.message}`);
         return;
       }
-      autoRenderAbort.current = null;
     }
 
     // Collect tracks for playback
@@ -345,14 +341,15 @@ export default function TransportBar() {
           if (track.track_type === 'audio') {
             state2.project.wave_parts.forEach(wp => {
               if (wp.track_no !== activeTrackIdx || !wp.buffer_id) return;
+              const fxUrl = state2.waveFxUrls[wp.buffer_id];
               tracks.push({
-                url: `/api/audio/${wp.buffer_id}`,
+                url: fxUrl || `/api/audio/${wp.buffer_id}`,
                 startOffsetSec: engine.ticksToSeconds(wp.position, state2.project.tempos),
                 volume: track.volume + (wp.volume ?? 0),
                 pan: Math.max(-100, Math.min(100, track.pan + (wp.pan ?? 0))),
                 muted: false,
-                skipSec: (wp.skip || 0) / 1000,
-                durationSec: (wp.file_duration_ms || 0) / 1000,
+                skipSec: fxUrl ? 0 : (wp.skip || 0) / 1000,
+                durationSec: fxUrl ? undefined : (wp.file_duration_ms || 0) / 1000,
               });
             });
           } else {
@@ -402,12 +399,13 @@ export default function TransportBar() {
         const muted = hasSolo ? !track.solo : track.mute;
         const clipVol = wp.volume ?? 0;
         const clipPan = wp.pan ?? 0;
+        const fxUrl = state2.waveFxUrls[wp.buffer_id];
         tracks.push({
-          url: `/api/audio/${wp.buffer_id}`,
+          url: fxUrl || `/api/audio/${wp.buffer_id}`,
           startOffsetSec: engine.ticksToSeconds(wp.position, state2.project.tempos),
           volume: track.volume + clipVol, pan: Math.max(-100, Math.min(100, track.pan + clipPan)), muted,
-          skipSec: (wp.skip || 0) / 1000,
-          durationSec: (wp.file_duration_ms || 0) / 1000,
+          skipSec: fxUrl ? 0 : (wp.skip || 0) / 1000,
+          durationSec: fxUrl ? undefined : (wp.file_duration_ms || 0) / 1000,
         });
       });
     }
@@ -415,12 +413,18 @@ export default function TransportBar() {
     if (tracks.length === 0) {
       const s3 = useSynthStore.getState();
       const hasVocalNotes = s3.project.voice_parts.some(vp => vp.notes.length > 0);
+      const hasInstNotes = s3.project.instrument_parts.some(ip => ip.notes.length > 0);
       const hasModel = s3.project.tracks.some((tr, i) =>
-        tr.track_type === 'vocal' && (s3.trackRvcModel[i] || s3.rvcModel));
+        tr.track_type === 'vocal' && s3.trackRvcModel[i]);
+      const hasPlugin = s3.project.tracks.some(tr =>
+        tr.track_type === 'instrument' && tr.plugin_name);
       if (hasVocalNotes && !hasModel) {
         s3.setRenderError(t('synth.needRvcModel'));
         s3.setRenderStatus('error');
-      } else if (!hasVocalNotes) {
+      } else if (hasInstNotes && !hasPlugin) {
+        s3.setRenderError(t('synth.needVstPlugin'));
+        s3.setRenderStatus('error');
+      } else if (!hasVocalNotes && !hasInstNotes) {
         s3.setRenderError(t('synth.noNotes', 'No notes to play. Add notes first.'));
         s3.setRenderStatus('error');
       }
@@ -478,16 +482,6 @@ export default function TransportBar() {
 
       <div className="utai-synth-transport__wave" ref={waveRef} />
 
-      {renderStatus === 'error' && renderError && (
-        <div style={{
-          position: 'absolute', bottom: -18, left: 0, right: 0,
-          color: 'var(--accent-red)', fontSize: 10, textAlign: 'center',
-          fontFamily: 'var(--font-pixel)', pointerEvents: 'none',
-          textShadow: '0 0 4px rgba(0,0,0,0.8)',
-        }}>
-          {renderError}
-        </div>
-      )}
     </div>
   );
 }

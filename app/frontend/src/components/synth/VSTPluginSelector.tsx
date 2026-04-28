@@ -1,8 +1,10 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
-import { getVSTPlugins, openVSTEditor } from '../../api/client';
+import { getVSTPlugins, openVSTEditor, closeVSTEditor } from '../../api/client';
 import { onModelsChanged } from '../../utils/modelEvents';
+
+const API_BASE = (import.meta as any).env?.VITE_API_URL || '';
 
 export default function VSTPluginSelector() {
   const { t } = useTranslation();
@@ -10,6 +12,8 @@ export default function VSTPluginSelector() {
   const activeInstIdx = useSynthStore(s => s.activeInstrumentPartIndex);
   const setTrackPlugin = useSynthStore(s => s.setTrackPlugin);
   const [plugins, setPlugins] = useState<any[]>([]);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const instPart = activeInstIdx >= 0 ? project.instrument_parts[activeInstIdx] : null;
   const trackNo = instPart?.track_no ?? -1;
@@ -22,14 +26,38 @@ export default function VSTPluginSelector() {
     });
   }, []);
 
-  const handleOpenEditor = useCallback(async () => {
+  const checkStatus = useCallback(() => {
+    if (!track?.plugin_name) return;
+    fetch(`${API_BASE}/api/vst/editor/status/${encodeURIComponent(track.plugin_name)}`)
+      .then(r => r.json()).then(d => setEditorOpen(d.open)).catch(() => setEditorOpen(false));
+  }, [track?.plugin_name]);
+
+  useEffect(() => { checkStatus(); }, [track?.plugin_name]);
+
+  useEffect(() => {
+    if (!editorOpen || !track?.plugin_name) {
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+      return;
+    }
+    pollRef.current = setInterval(checkStatus, 1500);
+    return () => { if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; } };
+  }, [editorOpen, checkStatus]);
+
+  const handleToggleEditor = useCallback(async () => {
     if (!track?.plugin_name) return;
     try {
-      await openVSTEditor(track.plugin_name);
+      if (editorOpen) {
+        await closeVSTEditor(track.plugin_name);
+        setEditorOpen(false);
+      } else {
+        const result = await openVSTEditor(track.plugin_name);
+        setEditorOpen(result.status === 'opened' || result.status === 'already_open');
+      }
     } catch (e: any) {
-      console.error('Failed to open editor:', e);
+      console.error('Editor toggle failed:', e);
+      checkStatus();
     }
-  }, [track?.plugin_name]);
+  }, [track?.plugin_name, editorOpen, checkStatus]);
 
   if (!track) return null;
 
@@ -71,11 +99,12 @@ export default function VSTPluginSelector() {
             fontSize: 10,
             padding: '3px 10px',
             borderColor: 'var(--accent-orange)',
-            color: 'var(--accent-orange)',
+            color: editorOpen ? '#1a1a2e' : 'var(--accent-orange)',
+            background: editorOpen ? 'var(--accent-orange)' : 'transparent',
           }}
-          onClick={handleOpenEditor}
+          onClick={handleToggleEditor}
         >
-          {t('synth.openEditor')}
+          {editorOpen ? t('synth.closeEditor') : t('synth.openEditor')}
         </button>
       )}
     </div>

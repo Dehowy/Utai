@@ -30,15 +30,26 @@ def wav2(i, o, format):
 
 def load_audio(file, sr):
     try:
-        # https://github.com/openai/whisper/blob/main/whisper/audio.py#L26
-        # This launches a subprocess to decode audio while down-mixing and resampling as necessary.
-        # Requires the ffmpeg CLI and `ffmpeg-python` package to be installed.
-        file = clean_path(file)  # 防止小白拷路径头尾带了空格和"和回车
-        out, _ = (
+        file = clean_path(file)
+        import subprocess
+        args = (
             ffmpeg.input(file, threads=0)
             .output("-", format="f32le", acodec="pcm_f32le", ac=1, ar=sr)
-            .run(cmd=["ffmpeg", "-nostdin"], capture_stdout=True, capture_stderr=True)
+            .get_args()
         )
+        kw = {}
+        if platform.system() == "Windows":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            kw["startupinfo"] = si
+            kw["creationflags"] = 0x08000000
+        p = subprocess.run(
+            ["ffmpeg", "-nostdin"] + args,
+            capture_output=True, **kw,
+        )
+        if p.returncode != 0:
+            raise RuntimeError(p.stderr.decode(errors="replace"))
+        out = p.stdout
     except Exception as e:
         raise RuntimeError(f"Failed to load audio: {e}")
 

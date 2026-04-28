@@ -66,6 +66,31 @@ AUTO_VIDEO_CODEC = {
     "ts": "libx264",
 }
 
+_h264_encoder: str | None = None
+
+def _detect_h264_encoder() -> str:
+    """Detect best available H.264 encoder (cached)."""
+    global _h264_encoder
+    if _h264_encoder is not None:
+        return _h264_encoder
+    import subprocess
+    ffmpeg = _find_ffmpeg()
+    candidates = ["h264_nvenc", "h264_mf", "libx264"]
+    for enc in candidates:
+        try:
+            r = subprocess.run(
+                [ffmpeg, "-hide_banner", "-f", "lavfi", "-i", "nullsrc=s=16x16:d=0.1",
+                 "-c:v", enc, "-f", "null", "-"],
+                capture_output=True, timeout=10,
+            )
+            if r.returncode == 0:
+                _h264_encoder = enc
+                return enc
+        except Exception:
+            continue
+    _h264_encoder = "copy"
+    return "copy"
+
 
 def _find_ffmpeg() -> str:
     """Find ffmpeg — prefer project-local bin/ over system PATH."""
@@ -207,6 +232,8 @@ class MediaOutputNode(BaseNode):
             vc = params.get("video_codec", "auto")
             if vc == "auto":
                 vc = AUTO_VIDEO_CODEC.get(container, "libx264")
+            if vc == "libx264":
+                vc = _detect_h264_encoder()
             cmd += ["-c:v", vc]
 
             if vc != "copy":

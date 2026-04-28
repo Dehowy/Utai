@@ -36,6 +36,8 @@ export interface RenderContext {
   partEndTick?: number;
   pitchToolActive?: boolean;
   hoverPitchPoint?: { noteIndex: number; pointIndex: number } | null;
+  ghostTracks?: number[];
+  modelF0Active?: boolean;
 }
 
 /** Main render function — call on every frame. */
@@ -232,6 +234,7 @@ function drawPitchCurves(rc: RenderContext) {
   const { ctx, width, height, project, viewState, activePartIndex } = rc;
   const { scrollX, scrollY, pixelsPerTick, pixelsPerSemitone } = viewState;
   if (rc.instrumentPart) return;
+  if (rc.modelF0Active) return;
 
   const part = project.voice_parts[activePartIndex];
   if (!part) return;
@@ -399,13 +402,60 @@ function drawNotes(rc: RenderContext) {
   const startTick = Math.floor(scrollX / pixelsPerTick);
   const endTick = Math.ceil((scrollX + width - KEYBOARD_WIDTH) / pixelsPerTick);
 
-  // When instrument part is active, dim all voice parts to background
   const instMode = !!rc.instrumentPart;
+  const ghostSet = new Set(rc.ghostTracks || []);
 
+  // Determine active track index
+  const activeTrackNo = instMode
+    ? rc.instrumentPart!.track_no
+    : (project.voice_parts[activePartIndex]?.track_no ?? -1);
+
+  // Ghost: draw voice parts belonging to ghost tracks
+  for (const vp of project.voice_parts) {
+    if (vp.track_no === activeTrackNo) continue;
+    if (!ghostSet.has(vp.track_no)) continue;
+    const color = TRACK_COLORS[vp.track_no % TRACK_COLORS.length];
+    for (const note of vp.notes) {
+      const absPos = vp.position + note.position;
+      if (absPos + note.duration < startTick || absPos > endTick) continue;
+      const x = KEYBOARD_WIDTH + absPos * pixelsPerTick - scrollX;
+      const y = HEADER_HEIGHT + (127 - note.tone) * pixelsPerSemitone - scrollY;
+      const w = note.duration * pixelsPerTick;
+      const h = pixelsPerSemitone;
+      if (y + h < HEADER_HEIGHT || y > height) continue;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.2;
+      ctx.fillRect(x, y + 1, w - 1, h - 2);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Ghost: draw instrument parts belonging to ghost tracks
+  for (const ip of project.instrument_parts) {
+    if (ip.track_no === activeTrackNo) continue;
+    if (!ghostSet.has(ip.track_no)) continue;
+    const color = TRACK_COLORS[ip.track_no % TRACK_COLORS.length];
+    for (const note of ip.notes) {
+      const absPos = ip.position + note.position;
+      if (absPos + note.duration < startTick || absPos > endTick) continue;
+      const x = KEYBOARD_WIDTH + absPos * pixelsPerTick - scrollX;
+      const y = HEADER_HEIGHT + (127 - note.tone) * pixelsPerSemitone - scrollY;
+      const w = note.duration * pixelsPerTick;
+      const h = pixelsPerSemitone;
+      if (y + h < HEADER_HEIGHT || y > height) continue;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.2;
+      ctx.fillRect(x, y + 1, w - 1, h - 2);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // Active voice parts
   project.voice_parts.forEach((part, pi) => {
-    const color = TRACK_COLORS[part.track_no % TRACK_COLORS.length];
     const isActivePart = !instMode && pi === activePartIndex;
+    if (!isActivePart) return;
 
+    const color = TRACK_COLORS[part.track_no % TRACK_COLORS.length];
     part.notes.forEach((note, ni) => {
       const absPos = part.position + note.position;
       const absEnd = absPos + note.duration;
@@ -422,13 +472,11 @@ function drawNotes(rc: RenderContext) {
       const noteId = `${pi}-${ni}`;
       const isSelected = selectedNotes.has(noteId);
 
-      // Note body
-      ctx.fillStyle = isActivePart ? color : '#555570';
-      ctx.globalAlpha = isActivePart ? 0.85 : 0.4;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.85;
       ctx.fillRect(x, y + 1, w - 1, h - 2);
       ctx.globalAlpha = 1;
 
-      // Selection border
       if (isSelected) {
         ctx.strokeStyle = '#f0f0ff';
         ctx.lineWidth = 2;
@@ -438,7 +486,6 @@ function drawNotes(rc: RenderContext) {
         ctx.strokeRect(x - 1, y, w + 1, h);
       }
 
-      // Lyric text
       if (w > 15 && h > 10) {
         ctx.fillStyle = isSelected ? '#f0f0ff' : '#d0d0dc';
         ctx.font = `${Math.min(12, h - 4)}px 'DotGothic16', sans-serif`;
@@ -446,7 +493,7 @@ function drawNotes(rc: RenderContext) {
         ctx.fillText(note.lyric, x + 3, y + h / 2, w - 6);
       }
 
-      // Duration label — show when note is longer than snap
+      // Duration label
       if (note.duration > viewState.snapTicks && w > 40 && h > 8) {
         const label = ticksToDurationLabel(note.duration, viewState.snapTicks);
         ctx.fillStyle = 'rgba(200, 200, 220, 0.5)';

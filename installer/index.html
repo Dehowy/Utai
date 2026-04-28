@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <title>Utai Installer</title>
+  <link rel="stylesheet" href="installer.css">
+</head>
+<body>
+  <!-- Title bar -->
+  <div class="titlebar" style="-webkit-app-region: drag;">
+    <img src="icon.png" class="titlebar-icon" alt="">
+    <span class="titlebar-logo">utai</span>
+    <span class="titlebar-text">Installer</span>
+    <div class="titlebar-controls" style="-webkit-app-region: no-drag;">
+      <button onclick="installer.minimize()">─</button>
+      <button onclick="installer.close()" class="close-btn">✕</button>
+    </div>
+  </div>
+
+  <div id="app">
+    <!-- Step 1: Welcome + Language -->
+    <div class="step" id="step-welcome">
+      <div class="step-content center">
+        <img src="icon.png" class="welcome-icon" alt="">
+        <div class="logo-large">「utai」</div>
+        <div class="subtitle" data-i18n="welcome.subtitle">AI Audio Workflow + Synthesizer</div>
+        <div class="version">v1.7.0</div>
+        <div class="lang-select">
+          <button class="lang-btn" onclick="setLang('zh',this)">中文</button>
+          <button class="lang-btn active" onclick="setLang('en',this)">English</button>
+          <button class="lang-btn" onclick="setLang('ja',this)">日本語</button>
+        </div>
+        <button class="btn-primary" onclick="goTo('network')" data-i18n="welcome.start">Start Installation</button>
+        <div id="uninstall-section"></div>
+      </div>
+    </div>
+
+    <!-- Step 2: Network -->
+    <div class="step hidden" id="step-network">
+      <div class="step-header" data-i18n="network.title">Network Settings</div>
+      <div class="step-desc" data-i18n="network.desc">Configure download sources. Users in mainland China should select a mirror.</div>
+      <div class="mirror-group">
+        <label>PyPI</label>
+        <div class="preset-row">
+          <button class="preset active" onclick="setMirror('pypi','',this)" data-i18n="mirror.default">Default</button>
+          <button class="preset" onclick="setMirror('pypi','https://pypi.tuna.tsinghua.edu.cn/simple',this)" data-i18n="mirror.tsinghua">Tsinghua</button>
+          <button class="preset" onclick="setMirror('pypi','https://mirrors.aliyun.com/pypi/simple',this)" data-i18n="mirror.aliyun">Aliyun</button>
+        </div>
+        <input id="mirror-pypi" placeholder="Custom URL" oninput="mirrors.pypi=this.value;updateNetworkNext()">
+      </div>
+      <div class="mirror-group">
+        <label>HuggingFace</label>
+        <div class="preset-row">
+          <button class="preset active" onclick="setMirror('huggingface','',this)" data-i18n="mirror.default">Default</button>
+          <button class="preset" onclick="setMirror('huggingface','https://hf-mirror.com',this)">hf-mirror</button>
+        </div>
+        <input id="mirror-huggingface" placeholder="Custom URL" oninput="mirrors.huggingface=this.value;updateNetworkNext()">
+      </div>
+      <div class="mirror-group">
+        <label>GitHub</label>
+        <div class="preset-row">
+          <button class="preset active" onclick="setMirror('github','',this)" data-i18n="mirror.default">Default</button>
+          <button class="preset" onclick="setMirror('github','https://ghproxy.com',this)">ghproxy</button>
+          <button class="preset" onclick="setMirror('github','https://gh-proxy.com',this)">gh-proxy</button>
+        </div>
+        <input id="mirror-github" placeholder="Custom URL" oninput="mirrors.github=this.value;updateNetworkNext()">
+      </div>
+      <div class="mirror-group">
+        <label>PyTorch</label>
+        <div class="preset-row">
+          <button class="preset active" onclick="setMirror('pytorch','',this)" data-i18n="mirror.default">Default</button>
+          <button class="preset" onclick="setMirror('pytorch','https://mirror.sjtu.edu.cn/pytorch-wheels',this)" data-i18n="mirror.sjtu">SJTU</button>
+        </div>
+        <input id="mirror-pytorch" placeholder="Custom URL" oninput="mirrors.pytorch=this.value;updateNetworkNext()">
+      </div>
+      <div id="network-test-result"></div>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="goTo('welcome')" data-i18n="btn.back">Back</button>
+        <button class="btn-test" onclick="testNetwork()" id="btn-test" data-i18n="network.test">Test Connection</button>
+        <button class="btn-primary" onclick="goTo('path')" data-i18n="btn.next">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 3: Path -->
+    <div class="step hidden" id="step-path">
+      <div class="step-header" data-i18n="path.title">Installation Path</div>
+      <div class="step-desc" data-i18n="path.desc">Choose where to install Utai. This folder will become the portable program directory.</div>
+      <div class="path-row">
+        <input id="install-path" value="" readonly>
+        <button class="btn-secondary" onclick="browsePath()" data-i18n="path.browse">Browse</button>
+      </div>
+      <div id="disk-space" class="info-text"></div>
+      <label class="shortcut-check"><input type="checkbox" id="create-shortcut" checked> <span data-i18n="path.shortcut">Create desktop shortcut</span></label>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="goTo('network')" data-i18n="btn.back">Back</button>
+        <button class="btn-primary" onclick="checkPathAndGo()" data-i18n="btn.next">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 4: Components -->
+    <div class="step hidden" id="step-components">
+      <div class="step-header" data-i18n="comp.title">Components</div>
+      <div class="step-desc" data-i18n="comp.desc">Select which features to install. At least one must be selected.</div>
+      <div class="component-card">
+        <label><input type="checkbox" id="comp-synth" checked onchange="validateComponents()"> <strong data-i18n="comp.synth">Synthesizer</strong></label>
+        <div class="comp-desc" data-i18n="comp.synthDesc">Turn your RVC voice models into virtual singers with a full music synthesizer!</div>
+      </div>
+      <div class="component-card">
+        <label><input type="checkbox" id="comp-audio" checked onchange="validateComponents()"> <strong data-i18n="comp.audio">Audio Tools</strong></label>
+        <div class="comp-desc" data-i18n="comp.audioDesc">Extract vocals from songs, remove instrumentals, change voice timbre, and train your own AI voice models.</div>
+      </div>
+      <div id="comp-warn" class="info-text error" style="display:none" data-i18n="comp.warn">Please select at least one component.</div>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="goTo('path', true)" data-i18n="btn.back">Back</button>
+        <button class="btn-primary" id="btn-comp-next" onclick="goTo('gpu')" data-i18n="btn.next">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 5: GPU -->
+    <div class="step hidden" id="step-gpu">
+      <div class="step-header" data-i18n="gpu.title">GPU Selection</div>
+      <div class="step-desc" data-i18n="gpu.desc">Select your graphics card for AI acceleration.</div>
+      <div id="gpu-detect" class="info-text">Detecting...</div>
+      <div class="gpu-options">
+        <label class="gpu-option"><input type="radio" name="gpu" value="cu121"> NVIDIA RTX 20/30/40 Series (CUDA 12.1)</label>
+        <label class="gpu-option"><input type="radio" name="gpu" value="cu128"> NVIDIA RTX 50 Series (CUDA 12.8)</label>
+        <label class="gpu-option"><input type="radio" name="gpu" value="cpu"> <span data-i18n="gpu.cpu">CPU Only (no GPU acceleration)</span></label>
+      </div>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="goTo('components')" data-i18n="btn.back">Back</button>
+        <button class="btn-primary" onclick="goTo('confirm')" data-i18n="btn.next">Next</button>
+      </div>
+    </div>
+
+    <!-- Step 6: Confirm -->
+    <div class="step hidden" id="step-confirm">
+      <div class="step-header" data-i18n="confirm.title">Confirm Installation</div>
+      <div id="confirm-summary" class="summary"></div>
+      <div class="btn-row">
+        <button class="btn-secondary" onclick="goTo('gpu')" data-i18n="btn.back">Back</button>
+        <button class="btn-primary" id="btn-install" onclick="startInstall()" data-i18n="confirm.install">Install</button>
+      </div>
+    </div>
+
+    <!-- Step 7: Installing -->
+    <div class="step hidden" id="step-installing">
+      <div class="step-header" data-i18n="installing.title">Installing...</div>
+      <div class="progress-bar"><div class="progress-fill" id="install-progress"></div></div>
+      <div id="install-status" class="info-text">Preparing...</div>
+      <div class="log-box" id="install-log"></div>
+    </div>
+
+    <!-- Step 8: Done -->
+    <div class="step hidden" id="step-done">
+      <div id="done-success" class="step-content center">
+        <div class="logo-large" style="color:#5dba5d">✓</div>
+        <div class="subtitle" data-i18n="done.success">Installation Complete!</div>
+        <button class="btn-primary btn-done" id="btn-launch" onclick="launchAndClose()" data-i18n="done.launch">Launch Utai</button>
+        <button class="btn-secondary btn-done" onclick="installer.close()" data-i18n="done.close">Close</button>
+      </div>
+      <div id="done-failed" style="display:none">
+        <div class="step-header" style="color:#ff6b9d" data-i18n="done.failed">Installation Failed</div>
+        <div class="step-desc" data-i18n="done.failedDesc">Check the log below for details.</div>
+        <div class="log-box" id="fail-log" style="flex:1"></div>
+        <div class="btn-row">
+          <button class="btn-secondary btn-done" onclick="saveInstallLog()" data-i18n="done.saveLog">Save Log</button>
+          <button class="btn-primary btn-done" onclick="retryInstall()" data-i18n="done.retry">Retry</button>
+          <button class="btn-secondary btn-done" onclick="installer.close()" data-i18n="done.close">Close</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="installer.js"></script>
+</body>
+</html>

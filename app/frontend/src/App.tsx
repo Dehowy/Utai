@@ -73,12 +73,24 @@ function AppContent() {
     return () => { document.removeEventListener('keydown', onKeyDown); document.removeEventListener('keyup', onKeyUp); };
   }, []);
 
-  // Handle .utai file opening
+  // Handle .utai / .utaiSynth file opening
   useEffect(() => {
     const api = window.electronAPI
     if (!api?.onOpenUtaiFile) return
     const cleanup = api.onOpenUtaiFile(async (filePath: string) => {
       try {
+        if (filePath.toLowerCase().endsWith('.utaisynth')) {
+          const res = await fetch('/api/synth/project/open-path', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: filePath }),
+          })
+          if (!res.ok) throw new Error(await res.text())
+          const data = await res.json()
+          const { applyOpenedProject } = await import('./components/synth/SynthProjectMenu')
+          applyOpenedProject(data)
+          navigate('/synth')
+          return
+        }
         const data = await importWorkflowFromPath(filePath)
         if (!data || data.status === 'cancelled') return
         const projectType = data.project_type || 'workflow'
@@ -97,7 +109,7 @@ function AppContent() {
           navigate('/')
         }
       } catch (err) {
-        console.error('[utai] Failed to open .utai file:', err)
+        console.error('[utai] Failed to open file:', err)
       }
     })
     return cleanup || undefined

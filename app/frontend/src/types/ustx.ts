@@ -83,6 +83,7 @@ export interface UWavePart {
   fadeout: number;
   buffer_id?: string;
   _fileTotalMs?: number; // original full file duration (for peaks slicing)
+  _origDurationMs?: number; // original duration before FX speed change
   volume?: number;    // clip-level dB (default 0)
   pan?: number;       // clip-level pan -100..100 (default 0)
 }

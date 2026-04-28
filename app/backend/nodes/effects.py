@@ -43,11 +43,19 @@ class EffectsNode(BaseNode):
     async def execute(
         self, inputs: dict[str, Any], params: dict[str, Any], ctx: ExecutionContext
     ) -> dict[str, Any]:
-        from app.backend.wrappers.effects_wrapper import apply_effects
+        from app.backend.wrappers.effects_wrapper import apply_effects_to_buffer
 
-        audio_path = inputs.get("audio", "")
-        if not audio_path:
+        import numpy as np
+
+        audio_data = inputs.get("audio")
+        if audio_data is None:
             raise ValueError("No audio input")
+
+        if isinstance(audio_data, tuple):
+            samples, sr = audio_data
+        else:
+            import soundfile as sf
+            samples, sr = sf.read(audio_data, dtype="float32")
 
         effects = params.get("effects", [])
         if isinstance(effects, str):
@@ -55,10 +63,15 @@ class EffectsNode(BaseNode):
             effects = json.loads(effects)
 
         if not effects:
-            return {"audio": audio_path}
+            return {"audio": (samples, sr)}
+
+        if samples.ndim == 1:
+            audio = np.stack([samples, samples])
+        else:
+            audio = samples.T
 
         await ctx.report_progress(0.1, "Applying effects...")
-        result_path = apply_effects(audio_path, effects)
+        result = apply_effects_to_buffer(audio, effects, sr)
         await ctx.report_progress(1.0, "Done")
 
-        return {"audio": result_path}
+        return {"audio": (result.T.astype(np.float32), sr)}

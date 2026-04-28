@@ -37,6 +37,7 @@ export interface ArrangementRenderContext {
   arrScrollY?: number;
   playheadHover?: boolean;
   dragOverride?: DragOverride | null;
+  audioFxRendering?: Record<number, boolean>;
 }
 
 export function renderArrangement(rc: ArrangementRenderContext) {
@@ -57,6 +58,7 @@ export function renderArrangement(rc: ArrangementRenderContext) {
   drawVoiceParts(rc);
   drawInstrumentParts(rc);
   drawWaveParts(rc);
+  drawAudioFxOverlay(rc);
   drawTrackHeaders(rc);
 
   ctx.restore();
@@ -134,6 +136,26 @@ function drawTrackLanes(rc: ArrangementRenderContext) {
     ctx.moveTo(TRACK_HEADER_W, y + laneH - 0.5);
     ctx.lineTo(width, y + laneH - 0.5);
     ctx.stroke();
+  }
+}
+
+function drawAudioFxOverlay(rc: ArrangementRenderContext) {
+  const { ctx, width, project, viewState, audioFxRendering } = rc;
+  if (!audioFxRendering) return;
+  const laneH = viewState.trackLaneHeight ?? TRACK_LANE_H;
+  const arrScrollY = rc.arrScrollY ?? 0;
+  for (let i = 0; i < project.tracks.length; i++) {
+    if (!audioFxRendering[i]) continue;
+    const y = RULER_H + i * laneH - arrScrollY;
+    if (y + laneH < RULER_H || y > rc.height) continue;
+    ctx.fillStyle = 'rgba(10, 10, 30, 0.7)';
+    ctx.fillRect(TRACK_HEADER_W, Math.max(RULER_H, y), width - TRACK_HEADER_W, laneH);
+    ctx.fillStyle = '#9b6dff';
+    ctx.font = "11px 'DotGothic16', sans-serif";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Rendering effects...', (TRACK_HEADER_W + width) / 2, y + laneH / 2);
+    ctx.textAlign = 'left';
   }
 }
 
@@ -371,13 +393,15 @@ function drawWaveParts(rc: ArrangementRenderContext) {
     ctx.clip();
 
     // Waveform thumbnail — absolute-time positioned peaks (jitter-free during resize)
-    const allPeaks = peakData?.get(wp.buffer_id || '');
+    const hasFxPeaks = peakData?.has(`fx:${wp.buffer_id}`);
+    const allPeaks = (hasFxPeaks ? peakData!.get(`fx:${wp.buffer_id}`) : peakData?.get(wp.buffer_id || '')) ?? null;
     if (allPeaks && allPeaks.length > 1) {
-      const totalMs = wp._fileTotalMs || Math.max(...project.wave_parts
+      const origTotalMs = wp._fileTotalMs || Math.max(...project.wave_parts
         .filter(w2 => w2.buffer_id === wp.buffer_id)
         .map(w2 => (w2.skip || 0) + w2.file_duration_ms));
+      const totalMs = hasFxPeaks ? wDurMs : origTotalMs;
       const msPP = totalMs / allPeaks.length;
-      const skip = wSkip || 0;
+      const skip = hasFxPeaks ? 0 : (wSkip || 0);
       const iStart = Math.max(0, Math.floor(skip / msPP));
       const iEnd = Math.min(allPeaks.length - 1, Math.ceil((skip + wDurMs) / msPP));
 

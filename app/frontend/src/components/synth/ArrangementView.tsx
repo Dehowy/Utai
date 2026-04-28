@@ -111,6 +111,7 @@ export default function ArrangementView() {
       selectedTrackIndex: s.selectedTrackIndex,
       peakData: new Map(Object.entries(s.peakData)),
       arrScrollY: s.arrScrollY,
+      audioFxRendering: s.audioFxRendering,
       playheadHover: playheadHoverRef.current,
       dragOverride: dragOverrideRef.current,
     });

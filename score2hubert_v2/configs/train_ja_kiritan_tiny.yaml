@@ -1,0 +1,56 @@
+# Score2HuBERT v2 training config — Run 7: Kiritan-only TINY model.
+# DiffSinger-scale (~11M) for single-singer 57-min dataset.
+#
+# Run 7 at 25M still too big (listened messy). Going to DiffSinger acoustic
+# model scale: hidden=256, ~11M total.
+
+model:
+  n_phones: 80
+  hidden_dim: 256       # 384→256 (DiffSinger standard)
+  hubert_dim: 768       # keep (RVC downstream)
+  n_enc_layers: 2       # aggressive: 4→2
+  n_heads: 4            # 256/4=64 per head
+  enc_kernel: 31        # keep — singing needs long receptive field
+  n_det_blocks: 3       # aggressive: 4→3
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — Kiritan only
+data:
+  train_dirs:
+    - data/processed/kiritan
+  val_dirs:
+    - data/processed/kiritan
+    - data/processed/oniku
+    - data/processed/jvs_music
+  max_frames: 500
+  num_workers: 4
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+
+# Training
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 20000
+  val_interval: 1000
+  save_interval: 2500
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 5

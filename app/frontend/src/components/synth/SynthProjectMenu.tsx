@@ -4,13 +4,16 @@ import { useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import { parseUstx } from '../../lib/synth/ustx';
+import { parseMidi } from '../../lib/synth/midi';
 import { utaiAlert, utaiConfirm } from '../UtaiAlert';
 import { showToast } from '../Toast';
 
-async function getSettings() {
+function getSettings() {
   const s = useSynthStore.getState();
-  return { language: s.language, rvcModel: s.rvcModel, trackRvcModel: s.trackRvcModel, muteStrategy: s.muteStrategy, trackMuteStrategy: s.trackMuteStrategy, singer: s.singer, pitchSnap: s.pitchSnap, rvcSettings: s.rvcSettings, globalF0Offset: s.globalF0Offset };
+  return { language: s.language, trackLanguage: s.trackLanguage, rvcModel: s.rvcModel, trackRvcModel: s.trackRvcModel, rvcSettings: s.rvcSettings, muteStrategy: s.muteStrategy, trackMuteStrategy: s.trackMuteStrategy, singer: s.singer, pitchSnap: s.pitchSnap, globalF0Offset: s.globalF0Offset, affineTransform: s.affineTransform, trackAffineTransform: s.trackAffineTransform, trackIndexRate: s.trackIndexRate, trackF0Offset: s.trackF0Offset, cosineIndex: s.cosineIndex, modelF0: s.modelF0, trackModelF0: s.trackModelF0, projectPath: s.projectPath };
 }
+
+export { getSettings as getSynthSettings };
 
 function getProjectPayload() {
   const s = useSynthStore.getState();
@@ -75,6 +78,12 @@ export async function saveProject(saveAs = false) {
         throw new Error(data.detail || 'Save failed');
       }
     }
+    // Flush autosave with current state (includes projectPath) so it survives reload
+    const cur = useSynthStore.getState();
+    fetch('/api/synth/project/autosave', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project: cur.project, trackEffects: cur.trackEffects, settings: await getSettings() }),
+    }).catch(() => {});
   } catch (err: any) {
     showToast(`Save failed: ${err.message}`, 'error');
   } finally {
@@ -95,6 +104,7 @@ export default function SynthProjectMenu() {
     if (!(await confirmIfDirty(t))) return;
     useSynthStore.getState().newProject();
     await fetch('/api/synth/project/autosave', { method: 'DELETE' });
+    fetch('/api/synth/logs', { method: 'DELETE' }).catch(() => {});
     showToast('New project created', 'info');
   };
 
@@ -130,7 +140,7 @@ export default function SynthProjectMenu() {
         }
         res = await fetch('/api/synth/project/open-path', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(filePath),
+          body: JSON.stringify({ path: filePath }),
         });
       } else {
         res = await fetch('/api/synth/project/open-dialog', { method: 'POST' });
@@ -147,20 +157,37 @@ export default function SynthProjectMenu() {
   const handleSave = () => { setOpen(false); saveProject(); };
   const handleSaveAs = () => { setOpen(false); saveProject(true); };
 
-  const handleImportUstx = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportScore = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const proj = parseUstx(reader.result as string);
-        useSynthStore.getState().loadProject(proj);
-        showToast('Imported .ustx', 'success');
-      } catch (err) {
-        utaiAlert(`Failed to load .ustx: ${err}`);
-      }
-    };
-    reader.readAsText(file);
+    const ext = file.name.toLowerCase().split('.').pop();
+
+    if (ext === 'mid' || ext === 'midi') {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const name = file.name.replace(/\.[^.]+$/, '');
+          const proj = parseMidi(reader.result as ArrayBuffer, name);
+          useSynthStore.getState().loadProject(proj);
+          showToast(`Imported ${file.name}`, 'success');
+        } catch (err) {
+          utaiAlert(`Failed to load MIDI: ${err}`);
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    } else {
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const proj = parseUstx(reader.result as string);
+          useSynthStore.getState().loadProject(proj);
+          showToast('Imported .ustx', 'success');
+        } catch (err) {
+          utaiAlert(`Failed to load .ustx: ${err}`);
+        }
+      };
+      reader.readAsText(file);
+    }
     e.target.value = '';
     setOpen(false);
   };
@@ -169,10 +196,43 @@ export default function SynthProjectMenu() {
     setOpen(false);
     const s = useSynthStore.getState();
     try {
-      const res = await fetch('/api/synth/project/export-audio-dialog', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: s.project, trackAudioUrls: s.trackAudioUrls, format: 'wav', sample_rate: 44100, bit_depth: 24 }),
-      });
+      const form = new FormData();
+      const trackBlobs: Record<number, { position_ticks: number; volume: number; pan: number }> = {};
+
+      // Collect vocal/instrument track blobs
+      for (let idx = 0; idx < s.project.tracks.length; idx++) {
+        const track = s.project.tracks[idx];
+        if (track.track_type === 'audio') continue;
+        const blobUrl = s.trackAudioUrls[idx];
+        if (!blobUrl) continue;
+
+        // Find earliest part position for this track
+        let posTicks = 0;
+        let clipVol = 0;
+        let clipPan = 0;
+        if (track.track_type === 'vocal') {
+          const vp = s.project.voice_parts.find((p: any) => p.track_no === idx);
+          if (vp) { posTicks = vp.position; clipVol = vp.volume ?? 0; clipPan = vp.pan ?? 0; }
+        } else if (track.track_type === 'instrument') {
+          const ip = s.project.instrument_parts.find((p: any) => p.track_no === idx);
+          if (ip) { posTicks = ip.position; clipVol = ip.volume ?? 0; clipPan = ip.pan ?? 0; }
+        }
+
+        const blob = await fetch(blobUrl).then(r => r.blob());
+        form.append('files', blob, `track_${idx}.wav`);
+        trackBlobs[idx] = { position_ticks: posTicks, volume: clipVol, pan: clipPan };
+      }
+
+      const projectMeta = {
+        project: s.project,
+        trackBlobs,
+        format: 'wav',
+        sample_rate: 44100,
+        bit_depth: 24,
+      };
+      form.append('project_json', JSON.stringify(projectMeta));
+
+      const res = await fetch('/api/synth/project/export-mix', { method: 'POST', body: form });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       if (data.cancelled) return;
@@ -189,7 +249,7 @@ export default function SynthProjectMenu() {
     { label: t('synth.project.save'), action: handleSave, shortcut: 'Ctrl+S', disabled: !dirty && !!projectPath },
     { label: t('synth.project.saveAs'), action: handleSaveAs, shortcut: '' },
     { sep: true },
-    { label: t('synth.project.importUstx'), action: () => { setOpen(false); ustxInputRef.current?.click(); }, shortcut: '' },
+    { label: t('synth.project.importScore'), action: () => { setOpen(false); ustxInputRef.current?.click(); }, shortcut: '' },
     { label: t('synth.project.exportAudio'), action: handleExportAudio, shortcut: '' },
   ];
 
@@ -222,29 +282,84 @@ export default function SynthProjectMenu() {
           </div>
         </>
       )}
-      <input ref={ustxInputRef} type="file" accept=".ustx,.ust" onChange={handleImportUstx} style={{ display: 'none' }} />
+      <input ref={ustxInputRef} type="file" accept=".ustx,.ust,.mid,.midi" onChange={handleImportScore} style={{ display: 'none' }} />
     </div>
   );
 }
 
 function _applyOpenedProject(data: any) {
   const s = useSynthStore.getState();
-  s.loadProject(data.project);
-  if (data.trackEffects) useSynthStore.setState({ trackEffects: data.trackEffects });
+  // Revoke old URLs
+  for (const url of Object.values(s.trackAudioUrls)) { if (url) URL.revokeObjectURL(url); }
+  if (s.finalUrl) URL.revokeObjectURL(s.finalUrl);
+
+  // Detect track language from lyrics (same logic as loadProject)
+  const trackLanguage: Record<number, string> = {};
+  for (const vp of (data.project.voice_parts || [])) {
+    if (trackLanguage[vp.track_no]) continue;
+    const allLyrics = vp.notes.map((n: any) => n.lyric || '').join('');
+    if (allLyrics.length > 0) {
+      const jaCount = [...allLyrics].filter(c => {
+        const cp = c.codePointAt(0) || 0;
+        return (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF);
+      }).length;
+      trackLanguage[vp.track_no] = jaCount / allLyrics.length > 0.5 ? 'ja' : 'zh';
+    }
+  }
+
+  // Build the FULL new state in one shot — dirty never transitions to true,
+  // so the autosave subscriber won't fire and overwrite saved data.
+  const newState: Record<string, any> = {
+    project: data.project,
+    dirty: false,
+    undoStack: [], redoStack: [],
+    selectedNotes: new Set(),
+    activePartIndex: 0, activeInstrumentPartIndex: -1, activeWavePartIndex: -1,
+    selectedTrackIndex: 0, selectedSegment: null,
+    viewMode: 'arrangement' as const,
+    isPlaying: false, playbackPositionTicks: 0,
+    loopEnabled: false, loopStart: 0, loopEnd: 0, arrScrollY: 0,
+    trackAudioUrls: {}, trackRawAudioUrls: {}, waveFxUrls: {},
+    audioFxRendering: {}, peakData: {},
+    trackEffects: data.trackEffects || {},
+    trackRenderedSnapshot: {},
+    trackRvcModel: {}, trackLanguage,
+    trackIndexRate: {}, trackF0Offset: {},
+    trackMuteStrategy: {}, trackAffineTransform: {},
+    cosineIndex: true, modelF0: false, trackModelF0: {},
+    ghostTracks: [],
+    affineTransform: false, globalF0Offset: 0,
+    projectPath: null,
+    renderedUrl: null, finalUrl: null,
+    renderError: '', renderStatus: 'idle' as const,
+  };
+
+  // Overlay saved settings (null checks preserve false/0/{} values)
   if (data.settings) {
     const st = data.settings;
-    if (st.language) useSynthStore.setState({ language: st.language });
-    if (st.rvcModel) useSynthStore.setState({ rvcModel: st.rvcModel });
-    if (st.trackRvcModel) useSynthStore.setState({ trackRvcModel: st.trackRvcModel });
-    if (st.muteStrategy) useSynthStore.setState({ muteStrategy: st.muteStrategy });
-    if (st.trackMuteStrategy) useSynthStore.setState({ trackMuteStrategy: st.trackMuteStrategy });
-    if (st.singer) useSynthStore.setState({ singer: st.singer });
-    if (st.pitchSnap != null) useSynthStore.setState({ pitchSnap: st.pitchSnap });
-    if (st.rvcSettings) useSynthStore.setState({ rvcSettings: st.rvcSettings });
-    if (st.globalF0Offset != null) useSynthStore.setState({ globalF0Offset: st.globalF0Offset });
+    if (st.language != null) newState.language = st.language;
+    if (st.trackLanguage != null) newState.trackLanguage = st.trackLanguage;
+    if (st.rvcModel != null) newState.rvcModel = st.rvcModel;
+    if (st.trackRvcModel != null) newState.trackRvcModel = st.trackRvcModel;
+    if (st.rvcSettings != null) newState.rvcSettings = st.rvcSettings;
+    if (st.muteStrategy != null) newState.muteStrategy = st.muteStrategy;
+    if (st.trackMuteStrategy != null) newState.trackMuteStrategy = st.trackMuteStrategy;
+    if (st.singer != null) newState.singer = st.singer;
+    if (st.pitchSnap != null) newState.pitchSnap = st.pitchSnap;
+    if (st.globalF0Offset != null) newState.globalF0Offset = st.globalF0Offset;
+    if (st.affineTransform != null) newState.affineTransform = st.affineTransform;
+    if (st.trackAffineTransform != null) newState.trackAffineTransform = st.trackAffineTransform;
+    if (st.trackIndexRate != null) newState.trackIndexRate = st.trackIndexRate;
+    if (st.trackF0Offset != null) newState.trackF0Offset = st.trackF0Offset;
+    if (st.cosineIndex != null) newState.cosineIndex = st.cosineIndex;
+    if (st.modelF0 != null) newState.modelF0 = st.modelF0;
+    if (st.trackModelF0 != null) newState.trackModelF0 = st.trackModelF0;
+    if (st.projectPath != null) newState.projectPath = st.projectPath;
   }
-  if (data.path) useSynthStore.setState({ projectPath: data.path });
-  // Regenerate peak data for restored audio buffers
+  if (data.path) newState.projectPath = data.path;
+
+  useSynthStore.setState(newState);
+
   for (const wp of data.project.wave_parts || []) {
     if (wp.buffer_id) {
       fetch(`/api/audio/${wp.buffer_id}/peaks?width=4000`).then(r => r.json()).then(d => {
@@ -252,7 +367,6 @@ function _applyOpenedProject(data: any) {
       }).catch(() => {});
     }
   }
-  useSynthStore.setState({ dirty: false });
   showToast('Project loaded', 'success');
 }
 

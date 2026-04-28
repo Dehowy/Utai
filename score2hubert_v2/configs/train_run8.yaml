@@ -1,0 +1,92 @@
+# Score2HuBERT v2 training config — Run 8: SOFA + SP=0 + frame-consistency + intra-note pos
+#
+# Changes from Run 5:
+#   - JA data SOFA-JA (Greenleaf JPN_Test2_Plus) realigned (UTAU excluded from align)
+#   - UTAU DROPPED from train + val (post-SOFA-similarity audit: UTAU stays an outlier,
+#     0.65-0.70 cos with single-singer JA, isolated-phoneme vs continuous-singing gap is
+#     fundamental acoustic difference SOFA can't fix)
+#   - JVS-MuSiC still excluded from train (kept in val for reference)
+#   - trainer.compute_loss: SP=0 force (GT HuBERT[SP_frames] = 0 vector)
+#   - trainer.compute_loss: frame-consistency loss (L1 on adjacent pred diff within same
+#     phoneme, weight 0.02) to combat "长尾口胡" mid-phoneme drift
+#   - LengthRegulator: intra-note pos encoding (pos_in_note + log(note_dur)) on top of
+#     existing intra-phoneme pos. Model learns "attack→sustain→release" envelope.
+#   - ja_weight down 2.4 → 1.5: UTAU drop reduced JA from 22K → 3.2K samples,
+#     augmentation (5x via pyworld pitch/time) lifts effective JA to ~16K,
+#     natural ratio 90K:16K → target batch 83:17 zh/ja, ja_weight 1.5 hits ~16% JA share
+#   - keep_last 3 → 15: preemptive snapshot retention so overfit/long-tail analysis
+#     can compare pre-drift checkpoints
+#
+# SOFA realign coverage: kiritan/itako/oniku/ofuton/natsume (86-99% OK rate).
+# Segment id preserved → Run 5 vs Run 8 per-sample A/B is possible.
+
+# Model — SAME as Run 5 (54M params), plus LR note_pos_proj + note_dur_proj adds ~0.5M
+model:
+  n_phones: 80
+  hidden_dim: 512
+  hubert_dim: 768
+  n_enc_layers: 5
+  n_heads: 8
+  enc_kernel: 31
+  n_det_blocks: 6
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — ZH (ACE, NOT SOFA-aligned) + JA (5 single-singer SOFA-aligned + augmented).
+# NO UTAU. NO GTSINGER. NO EN. NO JVS in train (val only).
+data:
+  train_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+  val_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+    - data/processed/jvs_music  # out-of-train reference
+  max_frames: 500
+  num_workers: 8
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+  # UTAU drop → JA 3.2K. After 5x pyworld aug → 16K. Target ~35% batch share (≈ Run 5's
+  # 37%) with 183 views per variant — augmentation diversity means each view is a
+  # different variant, keeping overfit below Run 3 EN's 492-view line despite high
+  # repetition count. ja_weight 3 ≈ maintains Run 5 batch composition.
+  lang_weights:
+    zh: 1.0
+    ja: 3.0
+
+# Training
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1500
+  max_steps: 75000
+  val_interval: 2500
+  save_interval: 5000
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05        # Run 3 overfit lesson — do not raise
+  hubert_consist: 0.02     # Run 8 NEW: frame-consistency within same phoneme
+  pos_aux: 0.05            # Run 8 NEW: aux L1 on predicted pos_in_phone + pos_in_note
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 15           # Run 5 lost pre-voicing-drift ckpts to keep_last=3. Up to 15.

@@ -1,0 +1,5 @@
+;!@Install@!UTF-8!
+Title="Utai Installer"
+RunProgram="Utai Installer.exe"
+GUIMode="2"
+;!@InstallEnd@!

@@ -592,6 +592,49 @@ async def get_rvc_range_status(model_name: str):
     return {"status": "not_started"}
 
 
+_NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+def _midi_name(m: int) -> str:
+    return f"{_NOTE_NAMES[m % 12]}{m // 12 - 1}"
+
+
+class RangeUpdate(BaseModel):
+    comfort_low: int
+    comfort_high: int
+
+
+@router.post("/rvc/reset-range/{model_name}")
+async def reset_rvc_range(model_name: str):
+    """Reset comfort range to auto-detected values from per-semitone results."""
+    from app.backend.config import RVC_ROOT
+
+    clean_name = model_name.replace(".pth", "")
+    range_json = Path(RVC_ROOT) / "assets" / "weights" / f"{clean_name}_range.json"
+    if not range_json.exists():
+        raise HTTPException(404, f"No range data for model: {clean_name}")
+
+    data = json.loads(range_json.read_text(encoding="utf-8"))
+    results = data.get("results", [])
+    if not results:
+        raise HTTPException(400, "No per-semitone results to recalculate from")
+
+    comfort_midis = [r["midi"] for r in results if r.get("comfort")]
+    if comfort_midis:
+        data["comfort_low"] = min(comfort_midis)
+        data["comfort_high"] = max(comfort_midis)
+    else:
+        usable_midis = [r["midi"] for r in results if r.get("usable")]
+        if usable_midis:
+            data["comfort_low"] = min(usable_midis)
+            data["comfort_high"] = max(usable_midis)
+
+    data["comfort_label"] = f"{_midi_name(data['comfort_low'])}-{_midi_name(data['comfort_high'])}"
+    range_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    logger.info(f"Range reset for {clean_name}: comfort {data['comfort_label']}")
+    return data
+
+
 @router.get("/rvc/range/{model_name}")
 async def get_rvc_range(model_name: str):
     """Get cached range data for an RVC model (if available)."""
@@ -602,3 +645,23 @@ async def get_rvc_range(model_name: str):
     if range_json.exists():
         return json.loads(range_json.read_text(encoding="utf-8"))
     return None
+
+
+@router.put("/rvc/range/{model_name}")
+async def update_rvc_range(model_name: str, body: RangeUpdate):
+    """Manually update comfort range for an RVC model."""
+    from app.backend.config import RVC_ROOT
+
+    clean_name = model_name.replace(".pth", "")
+    range_json = Path(RVC_ROOT) / "assets" / "weights" / f"{clean_name}_range.json"
+    if not range_json.exists():
+        raise HTTPException(404, f"No range data for model: {clean_name}")
+
+    data = json.loads(range_json.read_text(encoding="utf-8"))
+    data["comfort_low"] = body.comfort_low
+    data["comfort_high"] = body.comfort_high
+    data["comfort_label"] = f"{_midi_name(body.comfort_low)}-{_midi_name(body.comfort_high)}"
+
+    range_json.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    logger.info(f"Range updated for {clean_name}: comfort {data['comfort_label']}")
+    return data

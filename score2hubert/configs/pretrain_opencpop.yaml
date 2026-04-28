@@ -1,0 +1,150 @@
+# Score2HuBERT — Phase 1: Chinese Pre-training on ACE-Opencpop (IPA)
+# ACE-Opencpop: ~120h, 30 singers, with IPA phoneme vocabulary
+# Expected: 50k steps in ~24 hours on RTX 3080 Ti
+# Model: ~65M params (encoder 4L, flow 4L) — optimized for IPA + RVC backend
+
+model:
+  encoder:
+    d_model: 512
+    n_layers: 4              # reduced from 6 — IPA removes cross-lingual learning need
+    n_heads: 8
+    d_ff: 2048
+    conv_kernel_size: 31
+    dropout: 0.1
+    phoneme_vocab_size: 80   # IPA vocab (66 IPA + 7 special + 7 padding)
+    max_pitch: 128
+    pitch_embed_dim: 256
+    use_relative_pos: true
+
+  flow_matching:
+    d_hubert: 768
+    n_layers: 4              # reduced from 6 — flow decoder doesn't need huge capacity
+    n_heads: 8
+    d_ff: 2048
+    d_cond: 512
+    dropout: 0.1
+    sigma_min: 1.0e-4
+    ot_ode: true
+    cfg:
+      enabled: true
+      drop_prob: 0.05         # Plan A: 0.15→0.05, force conditional learning
+      guidance_scale: 2.0
+
+  f0_predictor:
+    hidden_dim: 384
+    conv_layers: 5
+    conv_kernel: 5
+    lstm_layers: 2
+    dropout: 0.1
+
+  variance:
+    energy:
+      enabled: true
+      n_layers: 3
+      kernel_size: 3
+      hidden_dim: 256
+    breathiness:
+      enabled: false  # skip for pre-training, enable in fine-tuning
+    voicing:
+      enabled: true
+      n_layers: 2
+      kernel_size: 3
+      hidden_dim: 256
+
+  duration_predictor:
+    enabled: false
+
+audio:
+  sample_rate: 16000
+  hop_length: 160
+  win_length: 400
+  n_fft: 512
+  target_sr: 44100
+
+hubert:
+  layer: 12
+  feature_dim: 768
+
+f0:
+  method: "rmvpe"
+  f0_min: 50.0
+  f0_max: 1100.0
+
+rvc_compensation:
+  enabled: false  # skip during pre-training
+
+data:
+  processed_dir: "data/processed/ace_opencpop"
+  val_ratio: 0.05
+  test_ratio: 0.05
+  max_frames: 1200
+  min_frames: 30
+  augmentation:
+    pitch_shift:
+      enabled: true
+      range_semitones: [-12, 12]
+      prob: 0.5
+    time_stretch:
+      enabled: true
+      range: [0.9, 1.1]
+      prob: 0.3
+    noise:
+      enabled: false
+
+training:
+  optimizer:
+    type: "adamw"
+    lr: 1.5e-4                # Plan A resume: lower than Run 1 (2e-4) — fine-tuning, not from scratch.
+                              # Picked at 0.75x rather than 2x for batch=32 because we're resuming
+                              # from a converged checkpoint and want gentle nudging, not big steps.
+    betas: [0.9, 0.98]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  scheduler:
+    type: "warmup_cosine"
+    warmup_steps: 1000        # short warmup since resuming from converged best.pt
+    min_lr: 1.0e-6
+    total_steps: 75000        # extended for Plan A resume (best.pt was at step 48000)
+  batch_size: 32              # bumped 16→32 after profiling: 5.3x throughput, 7.7GB peak / 12GB
+  accumulate_grad: 1
+  num_workers: 4              # 4 workers fully hide data loading on Windows (verified)
+  persistent_workers: true    # avoid worker respawn between epochs
+  prefetch_factor: 4          # each worker buffers 4 batches ahead
+  max_steps: 75000            # Plan A: extended from 50000 (resume from step 48000, ~27k more steps)
+  val_every: 1000
+  save_every: 2500
+  log_every: 50
+  loss:
+    flow_matching: 1.0
+    f0: 1.0
+    duration: 0.0
+    energy: 0.1
+    breathiness: 0.0
+    voicing: 0.05
+    reconstruction: 0.5       # Plan A: NEW — directly supervises HuBERT content via Euler-step estimate
+    multiscale_hubert:
+      enabled: false          # disabled — saves ~50% compute, marginal benefit
+      scales: [1, 5, 10]
+      weight: 0.3
+  grad_clip: 1.0
+  ema:
+    enabled: true
+    decay: 0.9999
+  fp16: true
+  save_top_k: 3
+  monitor: "val/total_loss"
+
+inference:
+  flow_steps: 10
+  solver: "midpoint"
+  cfg_scale: 2.0
+  temperature: 1.0
+
+paths:
+  project_root: "."
+  rvc_root: "RVC/RVC20240604Nvidia"
+  hubert_model: "RVC/RVC20240604Nvidia/assets/hubert/hubert_base.pt"
+  rmvpe_model: "RVC/RVC20240604Nvidia/assets/rmvpe/rmvpe.pt"
+  rvc_weights_dir: "RVC/RVC20240604Nvidia/assets/weights"
+  checkpoint_dir: "checkpoints/pretrain_opencpop"
+  log_dir: "logs/pretrain_opencpop"

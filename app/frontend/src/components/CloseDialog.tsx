@@ -11,6 +11,7 @@ import { useTrainingStore } from '../store/trainingStore'
 import { useSynthStore } from '../store/synthStore'
 import { useWorkflowStore } from '../store/workflowStore'
 import { cleanupTemp, cleanupBuffers } from '../api/client'
+import { getSynthSettings } from './synth/SynthProjectMenu'
 
 interface CloseDialogProps {
   open: boolean
@@ -63,7 +64,7 @@ export function CloseDialog({ open, fromTray, onDone }: CloseDialogProps) {
       const s = useSynthStore.getState()
       await fetch('/api/synth/project/autosave', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: { language: s.language, rvcModel: s.rvcModel, muteStrategy: s.muteStrategy } }),
+        body: JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: getSynthSettings() }),
       }).catch(() => {})
       await cleanupTemp().catch(() => {})
       await cleanupBuffers().catch(() => {})

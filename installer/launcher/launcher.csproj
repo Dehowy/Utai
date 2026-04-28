@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <ApplicationIcon>..\..\icon.ico</ApplicationIcon>
+    <AssemblyName>Utai Installer</AssemblyName>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+  </PropertyGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\dist\utai_installer_content.7z" LogicalName="content.7z" />
+    <EmbeddedResource Include="..\node_modules\7zip-bin\win\x64\7za.exe" LogicalName="7za.exe" />
+  </ItemGroup>
+</Project>

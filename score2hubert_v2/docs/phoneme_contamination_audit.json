@@ -1,0 +1,552 @@
+{
+  "datasets": [
+    "ace_opencpop",
+    "utau",
+    "kiritan",
+    "itako",
+    "oniku",
+    "ofuton",
+    "natsume",
+    "jvs_music"
+  ],
+  "phone_agreement": [
+    {
+      "id": 50,
+      "name": "z",
+      "min_cos": 0.2010593875569964,
+      "mean_cos": 0.647369810894874,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 7418,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.2010593875569964
+    },
+    {
+      "id": 35,
+      "name": "ʔ",
+      "min_cos": 0.2077377937136305,
+      "mean_cos": 0.710846708526409,
+      "n_datasets": 6,
+      "n_pairs": 15,
+      "total_frames": 7085,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.2077377937136305
+    },
+    {
+      "id": 3,
+      "name": "SP",
+      "min_cos": 0.23135309911587953,
+      "mean_cos": 0.5993568377813895,
+      "n_datasets": 6,
+      "n_pairs": 15,
+      "total_frames": 175013,
+      "worst_pair": [
+        "ace_opencpop",
+        "oniku"
+      ],
+      "worst_cos": 0.23135309911587953
+    },
+    {
+      "id": 61,
+      "name": "h",
+      "min_cos": 0.2463632837415202,
+      "mean_cos": 0.664579841410539,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 7174,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.2463632837415202
+    },
+    {
+      "id": 34,
+      "name": "g",
+      "min_cos": 0.25598912520020284,
+      "mean_cos": 0.6242631912778298,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 12063,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.25598912520020284
+    },
+    {
+      "id": 29,
+      "name": "t",
+      "min_cos": 0.2736992931634108,
+      "mean_cos": 0.6007491710005947,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 36819,
+      "worst_pair": [
+        "itako",
+        "jvs_music"
+      ],
+      "worst_cos": 0.2736992931634108
+    },
+    {
+      "id": 28,
+      "name": "b",
+      "min_cos": 0.2963280536164832,
+      "mean_cos": 0.6590454321114436,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 9130,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.2963280536164832
+    },
+    {
+      "id": 49,
+      "name": "s",
+      "min_cos": 0.29854223431061827,
+      "mean_cos": 0.7116013682537733,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 30735,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.29854223431061827
+    },
+    {
+      "id": 58,
+      "name": "ɸ",
+      "min_cos": 0.3022225789874979,
+      "mean_cos": 0.6515684335351405,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 3161,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.3022225789874979
+    },
+    {
+      "id": 41,
+      "name": "dʑ",
+      "min_cos": 0.305966825395094,
+      "mean_cos": 0.6323638994009667,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 4303,
+      "worst_pair": [
+        "kiritan",
+        "jvs_music"
+      ],
+      "worst_cos": 0.305966825395094
+    },
+    {
+      "id": 32,
+      "name": "k",
+      "min_cos": 0.3182814932264017,
+      "mean_cos": 0.6560328952521373,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 43054,
+      "worst_pair": [
+        "itako",
+        "jvs_music"
+      ],
+      "worst_cos": 0.3182814932264017
+    },
+    {
+      "id": 68,
+      "name": "ɾ",
+      "min_cos": 0.32119548002019277,
+      "mean_cos": 0.6705836492692835,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 27635,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.32119548002019277
+    },
+    {
+      "id": 36,
+      "name": "ts",
+      "min_cos": 0.3407130972917534,
+      "mean_cos": 0.6795336330386698,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 19050,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.3407130972917534
+    },
+    {
+      "id": 31,
+      "name": "d",
+      "min_cos": 0.3468648840101479,
+      "mean_cos": 0.6853352820251191,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 22031,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.3468648840101479
+    },
+    {
+      "id": 63,
+      "name": "n",
+      "min_cos": 0.351854667070656,
+      "mean_cos": 0.6778985965510291,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 103816,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.351854667070656
+    },
+    {
+      "id": 39,
+      "name": "tɕ",
+      "min_cos": 0.35853836139138273,
+      "mean_cos": 0.6772608171778162,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 18296,
+      "worst_pair": [
+        "itako",
+        "jvs_music"
+      ],
+      "worst_cos": 0.35853836139138273
+    },
+    {
+      "id": 70,
+      "name": "j",
+      "min_cos": 0.39418206667783445,
+      "mean_cos": 0.7114882730816497,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 85078,
+      "worst_pair": [
+        "kiritan",
+        "jvs_music"
+      ],
+      "worst_cos": 0.39418206667783445
+    },
+    {
+      "id": 51,
+      "name": "ɕ",
+      "min_cos": 0.4006985755930091,
+      "mean_cos": 0.7358922369649428,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 37508,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.4006985755930091
+    },
+    {
+      "id": 71,
+      "name": "w",
+      "min_cos": 0.4155437225537044,
+      "mean_cos": 0.6742553704017441,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 50784,
+      "worst_pair": [
+        "kiritan",
+        "jvs_music"
+      ],
+      "worst_cos": 0.4155437225537044
+    },
+    {
+      "id": 62,
+      "name": "m",
+      "min_cos": 0.42825538498300664,
+      "mean_cos": 0.7247193931929367,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 47491,
+      "worst_pair": [
+        "oniku",
+        "jvs_music"
+      ],
+      "worst_cos": 0.42825538498300664
+    },
+    {
+      "id": 26,
+      "name": "p",
+      "min_cos": 0.45097989039647374,
+      "mean_cos": 0.659830871712567,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 14452,
+      "worst_pair": [
+        "ofuton",
+        "jvs_music"
+      ],
+      "worst_cos": 0.45097989039647374
+    },
+    {
+      "id": 64,
+      "name": "ɲ",
+      "min_cos": 0.49285763395213644,
+      "mean_cos": 0.6440302851514459,
+      "n_datasets": 3,
+      "n_pairs": 3,
+      "total_frames": 2509,
+      "worst_pair": [
+        "utau",
+        "oniku"
+      ],
+      "worst_cos": 0.49285763395213644
+    },
+    {
+      "id": 66,
+      "name": "ɴ",
+      "min_cos": 0.5291831916458052,
+      "mean_cos": 0.7574141793529888,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 36645,
+      "worst_pair": [
+        "utau",
+        "ofuton"
+      ],
+      "worst_cos": 0.5291831916458052
+    },
+    {
+      "id": 57,
+      "name": "ç",
+      "min_cos": 0.5584915826304402,
+      "mean_cos": 0.7008827862216425,
+      "n_datasets": 4,
+      "n_pairs": 6,
+      "total_frames": 2770,
+      "worst_pair": [
+        "utau",
+        "oniku"
+      ],
+      "worst_cos": 0.5584915826304402
+    },
+    {
+      "id": 17,
+      "name": "a",
+      "min_cos": 0.6459332355103353,
+      "mean_cos": 0.8632437832435235,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 375163,
+      "worst_pair": [
+        "utau",
+        "jvs_music"
+      ],
+      "worst_cos": 0.6459332355103353
+    },
+    {
+      "id": 10,
+      "name": "e",
+      "min_cos": 0.6752298733488137,
+      "mean_cos": 0.8644242700392094,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 143056,
+      "worst_pair": [
+        "utau",
+        "jvs_music"
+      ],
+      "worst_cos": 0.6752298733488137
+    },
+    {
+      "id": 21,
+      "name": "o",
+      "min_cos": 0.691584511345074,
+      "mean_cos": 0.8851346436094506,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 260821,
+      "worst_pair": [
+        "utau",
+        "jvs_music"
+      ],
+      "worst_cos": 0.691584511345074
+    },
+    {
+      "id": 7,
+      "name": "i",
+      "min_cos": 0.6957449912135777,
+      "mean_cos": 0.8555999011787979,
+      "n_datasets": 8,
+      "n_pairs": 28,
+      "total_frames": 333606,
+      "worst_pair": [
+        "natsume",
+        "jvs_music"
+      ],
+      "worst_cos": 0.6957449912135777
+    },
+    {
+      "id": 25,
+      "name": "ɯ",
+      "min_cos": 0.6958661674269931,
+      "mean_cos": 0.8433058182562867,
+      "n_datasets": 7,
+      "n_pairs": 21,
+      "total_frames": 129308,
+      "worst_pair": [
+        "utau",
+        "natsume"
+      ],
+      "worst_cos": 0.6958661674269931
+    },
+    {
+      "id": 48,
+      "name": "v",
+      "min_cos": 0.8186259765238542,
+      "mean_cos": 0.8186259765238542,
+      "n_datasets": 2,
+      "n_pairs": 1,
+      "total_frames": 255,
+      "worst_pair": [
+        "oniku",
+        "ofuton"
+      ],
+      "worst_cos": 0.8186259765238542
+    },
+    {
+      "id": 5,
+      "name": "br",
+      "min_cos": 0.872691367889717,
+      "mean_cos": 0.9153516819654146,
+      "n_datasets": 4,
+      "n_pairs": 6,
+      "total_frames": 10232,
+      "worst_pair": [
+        "itako",
+        "oniku"
+      ],
+      "worst_cos": 0.872691367889717
+    }
+  ],
+  "silence": {
+    "SP": {
+      "ace_opencpop": {
+        "n_frames": 167721,
+        "mean_mag": 9.043444705055366
+      },
+      "utau": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "kiritan": {
+        "n_frames": 158,
+        "mean_mag": 9.272179789834437
+      },
+      "itako": {
+        "n_frames": 732,
+        "mean_mag": 9.426330539074538
+      },
+      "oniku": {
+        "n_frames": 1619,
+        "mean_mag": 9.393420614923361
+      },
+      "ofuton": {
+        "n_frames": 1131,
+        "mean_mag": 9.399875480762114
+      },
+      "natsume": {
+        "n_frames": 3652,
+        "mean_mag": 9.397838093871586
+      },
+      "jvs_music": {
+        "n_frames": 0,
+        "mean_mag": null
+      }
+    },
+    "AP": {
+      "ace_opencpop": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "utau": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "kiritan": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "itako": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "oniku": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "ofuton": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "natsume": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "jvs_music": {
+        "n_frames": 0,
+        "mean_mag": null
+      }
+    },
+    "br": {
+      "ace_opencpop": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "utau": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "kiritan": {
+        "n_frames": 6232,
+        "mean_mag": 9.297159901653913
+      },
+      "itako": {
+        "n_frames": 3845,
+        "mean_mag": 9.338947956167173
+      },
+      "oniku": {
+        "n_frames": 42,
+        "mean_mag": 9.290279892455628
+      },
+      "ofuton": {
+        "n_frames": 113,
+        "mean_mag": 9.225499098653415
+      },
+      "natsume": {
+        "n_frames": 0,
+        "mean_mag": null
+      },
+      "jvs_music": {
+        "n_frames": 0,
+        "mean_mag": null
+      }
+    }
+  }
+}

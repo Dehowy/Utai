@@ -63,10 +63,10 @@ async def apply_effects_upload(
     except json.JSONDecodeError:
         raise HTTPException(400, "Invalid effects JSON")
 
-    # Save uploaded file
+    import uuid
     tmp_dir = TEMP_DIR / "effects"
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_path = tmp_dir / f"upload_{os.getpid()}.wav"
+    tmp_path = tmp_dir / f"upload_{uuid.uuid4().hex[:8]}.wav"
     with open(tmp_path, "wb") as f:
         f.write(await file.read())
 
@@ -77,4 +77,7 @@ async def apply_effects_upload(
         logger.exception("Effects processing failed")
         raise HTTPException(500, str(e))
     finally:
-        tmp_path.unlink(missing_ok=True)
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass

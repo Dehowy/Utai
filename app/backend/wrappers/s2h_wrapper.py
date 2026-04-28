@@ -53,8 +53,28 @@ _BUILTIN_VOCAB = {
 }
 
 SP_ID = 3
-CONSONANT_FRAMES = 3
 SAMPLES_PER_FRAME = 960  # 48kHz / 50fps
+
+# Per-phoneme duration targets from training data medians (frames at 50fps)
+_PHONE_DUR_WEIGHT: dict[str, int] = {
+    'p': 4, 'pʰ': 5, 'b': 4,
+    't': 4, 'tʰ': 5, 'd': 4,
+    'k': 5, 'kʰ': 7, 'g': 4, 'ʔ': 3,
+    'ts': 6, 'tsʰ': 8, 'dz': 6,
+    'tɕ': 6, 'tɕʰ': 7, 'dʑ': 6,
+    'ʈʂ': 7, 'ʈʂʰ': 8, 'ɖʐ': 6,
+    'tʃ': 6, 'dʒ': 6,
+    'f': 6, 'v': 5,
+    's': 10, 'z': 5,
+    'ɕ': 9, 'ʑ': 5,
+    'ʂ': 10, 'ʐ': 7,
+    'ʃ': 8, 'ʒ': 5,
+    'ç': 6, 'ɸ': 6,
+    'x': 6, 'ɣ': 5, 'h': 6,
+    'm': 5, 'n': 6, 'ɲ': 5, 'ŋ': 8, 'ɴ': 5,
+    'l': 5, 'ɾ': 4, 'ɹ': 4,
+    'j': 5, 'w': 5, 'ɥ': 5,
+}
 
 
 # ── G2P helpers ──────────────────────────────────────────────────────────
@@ -83,6 +103,9 @@ def _chinese_lyric_to_ipa(lyric: str) -> list[str]:
         return ["a"]
 
     initial, final = _split_pinyin(py)
+    # After j/q/x/y, written 'u' is actually 'ü' (IPA /y/)
+    if initial in ("j", "q", "x", "y") and final.startswith("u"):
+        final = "v" + final[1:]
     ipa: list[str] = []
     if initial and initial in PINYIN_INITIAL_TO_IPA:
         ipa.extend(PINYIN_INITIAL_TO_IPA[initial])
@@ -511,7 +534,7 @@ def _f0_to_coarse(f0_hz: torch.Tensor) -> torch.Tensor:
     f0_mel_min = 1127.0 * np.log(1.0 + 50.0 / 700.0)
     f0_mel_max = 1127.0 * np.log(1.0 + 1100.0 / 700.0)
     f0_mel_norm = (f0_mel - f0_mel_min) / (f0_mel_max - f0_mel_min)
-    coarse = (f0_mel_norm * 254.0 + 1.0).long().clamp(1, 255)
+    coarse = (f0_mel_norm * 254.0 + 1.0).round().long().clamp(1, 255)
     coarse[f0_hz < 50] = 0
     return coarse
 
@@ -538,6 +561,29 @@ def _rvc_decode(net_g, sid, hubert_feat: torch.Tensor, f0_hz: torch.Tensor, devi
 _RVC_CHUNK_FRAMES = 1500   # 30 seconds at 50fps
 _RVC_OVERLAP_FRAMES = 50   # 1 second crossfade overlap
 
+def _get_vram_gb() -> float:
+    try:
+        if torch.cuda.is_available():
+            return torch.cuda.get_device_properties(0).total_mem / (1024 ** 3)
+    except Exception:
+        pass
+    return 0.0
+
+_VRAM_GB: float | None = None
+
+def _clear_cache():
+    """Always clear — used between major pipeline stages (S2H→RVC) and at end."""
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def _maybe_clear_cache():
+    """Clear only on low-VRAM GPUs (<10GB) — used between RVC chunks."""
+    global _VRAM_GB
+    if _VRAM_GB is None:
+        _VRAM_GB = _get_vram_gb()
+    if _VRAM_GB < 10 and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
 
 @torch.no_grad()
 def _rvc_decode_chunked(net_g, sid, hubert_feat: torch.Tensor, f0_hz: torch.Tensor, device: str, sr: int):
@@ -545,8 +591,7 @@ def _rvc_decode_chunked(net_g, sid, hubert_feat: torch.Tensor, f0_hz: torch.Tens
     T = min(hubert_feat.size(0), f0_hz.size(0))
     if T <= _RVC_CHUNK_FRAMES:
         audio = _rvc_decode(net_g, sid, hubert_feat[:T], f0_hz[:T], device)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _maybe_clear_cache()
         return audio
 
     step = _RVC_CHUNK_FRAMES - _RVC_OVERLAP_FRAMES
@@ -562,8 +607,7 @@ def _rvc_decode_chunked(net_g, sid, hubert_feat: torch.Tensor, f0_hz: torch.Tens
         end = min(start + _RVC_CHUNK_FRAMES, T)
         chunk = _rvc_decode(net_g, sid, hubert_feat[start:end], f0_hz[start:end], device)
         parts.append(chunk)
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _maybe_clear_cache()
         if end >= T:
             break
         start += step
@@ -641,6 +685,17 @@ class S2HWrapper:
 
     def _ensure_rvc(self, model_name: str):
         if self._rvc_net_g is not None and self._rvc_model_name == model_name:
+            if self._rvc_index is None:
+                basename = model_name.replace(".pth", "")
+                index_path = self._find_index(basename)
+                if index_path:
+                    try:
+                        import faiss
+                        self._rvc_index = faiss.read_index(str(index_path))
+                        self._rvc_big_npy = self._rvc_index.reconstruct_n(0, self._rvc_index.ntotal)
+                        logger.info(f"RVC index loaded (late): {index_path.name} ({self._rvc_index.ntotal} vectors)")
+                    except Exception as e:
+                        logger.warning(f"RVC index load failed: {e}")
             return
 
         model_path = RVC_WEIGHTS_DIR / model_name
@@ -695,6 +750,39 @@ class S2HWrapper:
                 return f
         return None
 
+    def _index_retrieve(
+        self, pred_hubert: torch.Tensor, index_rate: float, cosine: bool,
+    ) -> torch.Tensor:
+        """Blend predicted HuBERT features with index-retrieved neighbors."""
+        npy = pred_hubert.numpy().astype("float32")
+        if cosine:
+            norms = np.linalg.norm(npy, axis=-1, keepdims=True)
+            npy_normed = npy / np.maximum(norms, 1e-12)
+            idx_norms = np.linalg.norm(self._rvc_big_npy, axis=-1, keepdims=True)
+            idx_normed = self._rvc_big_npy / np.maximum(idx_norms, 1e-12)
+            sim = npy_normed @ idx_normed.T
+            topk_idx = np.argsort(-sim, axis=-1)[:, :8]
+            topk_sim = np.take_along_axis(sim, topk_idx, axis=-1)
+            dist_sq = 2.0 * (1.0 - topk_sim + 1e-6)
+            weight = 1.0 / (dist_sq * dist_sq)
+            weight /= weight.sum(axis=1, keepdims=True)
+            retrieved = np.sum(
+                self._rvc_big_npy[topk_idx] * np.expand_dims(weight, axis=2),
+                axis=1,
+            )
+        else:
+            score, ix = self._rvc_index.search(npy, k=8)
+            weight = np.square(1.0 / score)
+            weight /= weight.sum(axis=1, keepdims=True)
+            retrieved = np.sum(
+                self._rvc_big_npy[ix] * np.expand_dims(weight, axis=2),
+                axis=1,
+            )
+        return (
+            torch.from_numpy(retrieved).float() * index_rate
+            + (1 - index_rate) * pred_hubert
+        )
+
     def _notes_to_tensors(
         self, notes: list[dict], bpm: float, language: str,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -745,31 +833,48 @@ class S2HWrapper:
             ipa_list = _lyric_to_ipa(lyric, language)
             note_frames = max(1, note_end_frame - note_start_frame)
 
-            # Distribute frames among phonemes
+            # Distribute frames — consonants at training-median targets, vowels elastic
             n_ph = len(ipa_list)
             if n_ph == 1:
                 frame_alloc = [note_frames]
             else:
-                cons_count = sum(1 for p in ipa_list if _is_consonant(p))
-                vowel_count = n_ph - cons_count
-                cons_frames_each = min(CONSONANT_FRAMES, max(1, note_frames // n_ph))
-                remaining = note_frames - cons_count * cons_frames_each
-                vowel_frames_each = max(1, remaining // max(vowel_count, 1))
-
-                frame_alloc = []
-                for p in ipa_list:
+                frame_alloc = [0] * n_ph
+                vowel_indices: list[int] = []
+                cons_total = 0
+                for idx, p in enumerate(ipa_list):
                     if _is_consonant(p):
-                        frame_alloc.append(cons_frames_each)
+                        frame_alloc[idx] = _PHONE_DUR_WEIGHT.get(p, 4)
+                        cons_total += frame_alloc[idx]
                     else:
-                        frame_alloc.append(vowel_frames_each)
+                        vowel_indices.append(idx)
 
-                # Fix rounding — distribute remainder to last vowel
+                # Cap consonant share at 75% so vowels stay audible
+                max_cons = note_frames if not vowel_indices else int(note_frames * 0.75)
+                if cons_total > max_cons and cons_total > 0:
+                    scale = max_cons / cons_total
+                    cons_total = 0
+                    for idx in range(n_ph):
+                        if _is_consonant(ipa_list[idx]):
+                            frame_alloc[idx] = max(1, int(frame_alloc[idx] * scale))
+                            cons_total += frame_alloc[idx]
+
+                remaining = note_frames - cons_total
+                if vowel_indices:
+                    v_each = max(1, remaining // len(vowel_indices))
+                    for idx in vowel_indices:
+                        frame_alloc[idx] = v_each
+                elif remaining > 0:
+                    frame_alloc[-1] += remaining
+
+                # Fix rounding remainder
                 diff = note_frames - sum(frame_alloc)
                 if diff != 0:
                     for j in range(len(frame_alloc) - 1, -1, -1):
                         if not _is_consonant(ipa_list[j]):
                             frame_alloc[j] = max(1, frame_alloc[j] + diff)
                             break
+                    else:
+                        frame_alloc[-1] = max(1, frame_alloc[-1] + diff)
 
             # _lyric_to_ipa returning ["SP"] means the lyric itself is a
             # silence marker (e.g. "R", "br") — treat as rest.
@@ -807,10 +912,13 @@ class S2HWrapper:
         f0_up_key: int = 0,
         mute_strategy: str = "auto",
         index_rate: float = 0.75,
+        cosine_index: bool = True,
+        model_f0: bool = False,
     ) -> tuple[np.ndarray, int]:
         """Full pipeline: notes → Score2HuBERT → RVC → post mute → (audio, sr).
 
-        Uses Path B (user F0) if any note has pitch curve data, else Path A (model predicts F0).
+        model_f0=True: model predicts F0 (Path A). False: use note pitch data (Path B).
+        cosine_index=True: L2-normalized cosine retrieval. False: raw FAISS L2.
         Returns numpy float32 array and sample rate.
         """
         self._ensure_model()
@@ -821,9 +929,10 @@ class S2HWrapper:
         phonemes, pitch, durations, is_rest = self._notes_to_tensors(notes, bpm, language)
         total_frames = int(durations.sum())
 
-        user_f0 = _notes_to_f0_curve(notes, bpm, total_frames)
-        path = "B (user F0)" if user_f0 is not None else "A (model F0)"
-        idx_info = f"index_rate={index_rate}" if self._rvc_index is not None else "no index"
+        user_f0 = None if model_f0 else _notes_to_f0_curve(notes, bpm, total_frames)
+        path = "A (model F0)" if model_f0 else ("B (user F0)" if user_f0 is not None else "A (model F0)")
+        idx_mode = "cosine" if cosine_index else "L2"
+        idx_info = f"index({idx_mode})={index_rate}" if self._rvc_index is not None else "no index"
         rest_phones = int(is_rest.sum())
         logger.info(f"S2H render: {len(phonemes)} phones ({rest_phones} rest), {total_frames} frames, "
                      f"path={path}, lang={language}, rvc={rvc_model}, key={f0_up_key}, {idx_info}")
@@ -839,19 +948,10 @@ class S2HWrapper:
         pred_hubert = out["hubert_pred"][0].float().cpu()
         pred_f0 = user_f0 if user_f0 is not None else out["f0_pred"][0].float().cpu()
         del out, f0_target
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _clear_cache()
 
         if self._rvc_index is not None and self._rvc_big_npy is not None and index_rate > 0:
-            npy = pred_hubert.numpy().astype("float32")
-            score, ix = self._rvc_index.search(npy, k=8)
-            weight = np.square(1.0 / score)
-            weight /= weight.sum(axis=1, keepdims=True)
-            retrieved = np.sum(self._rvc_big_npy[ix] * np.expand_dims(weight, axis=2), axis=1)
-            pred_hubert = (
-                torch.from_numpy(retrieved).float() * index_rate
-                + (1 - index_rate) * pred_hubert
-            )
+            pred_hubert = self._index_retrieve(pred_hubert, index_rate, cosine_index)
 
         # Apply pitch shift
         if f0_up_key != 0:
@@ -902,6 +1002,8 @@ class S2HWrapper:
         mute_strategy: str = "auto",
         index_rate: float = 0.75,
         range_data: dict | None = None,
+        cosine_index: bool = True,
+        model_f0: bool = False,
     ) -> tuple[np.ndarray, int]:
         """Render with affine pitch transform for RVC range extension.
 
@@ -911,7 +1013,7 @@ class S2HWrapper:
         """
         if not range_data:
             return self.render(notes, bpm, language, rvc_model, f0_up_key,
-                               mute_strategy, index_rate)
+                               mute_strategy, index_rate, cosine_index, model_f0)
 
         comfort_low = range_data.get("comfort_low", 48)
         comfort_high = range_data.get("comfort_high", 72)
@@ -921,7 +1023,7 @@ class S2HWrapper:
         voiced_notes = [n for n in notes if n.get("tone", 0) > 0]
         if not voiced_notes:
             return self.render(notes, bpm, language, rvc_model, f0_up_key,
-                               mute_strategy, index_rate)
+                               mute_strategy, index_rate, cosine_index, model_f0)
 
         target_midis = [n["tone"] + f0_up_key for n in voiced_notes]
         min_target = min(target_midis)
@@ -930,12 +1032,12 @@ class S2HWrapper:
         if min_target >= comfort_low and max_target <= comfort_high:
             logger.info("Affine: all notes in comfort zone — normal render")
             return self.render(notes, bpm, language, rvc_model, f0_up_key,
-                               mute_strategy, index_rate)
+                               mute_strategy, index_rate, cosine_index, model_f0)
 
         if min_target >= range_low and max_target <= range_high:
             logger.info("Affine: all notes in usable range — normal render (no WORLD needed)")
             return self.render(notes, bpm, language, rvc_model, f0_up_key,
-                               mute_strategy, index_rate)
+                               mute_strategy, index_rate, cosine_index, model_f0)
 
         a, b = _compute_affine(min_target, max_target, comfort_low, comfort_high)
         logger.info(f"Affine transform: [{min_target},{max_target}] → "
@@ -979,19 +1081,10 @@ class S2HWrapper:
             )
         pred_hubert = out["hubert_pred"][0].float().cpu()
         del out, f0_in
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _clear_cache()
 
         if self._rvc_index is not None and self._rvc_big_npy is not None and index_rate > 0:
-            npy = pred_hubert.numpy().astype("float32")
-            score, ix = self._rvc_index.search(npy, k=8)
-            weight = np.square(1.0 / score)
-            weight /= weight.sum(axis=1, keepdims=True)
-            retrieved = np.sum(self._rvc_big_npy[ix] * np.expand_dims(weight, axis=2), axis=1)
-            pred_hubert = (
-                torch.from_numpy(retrieved).float() * index_rate
-                + (1 - index_rate) * pred_hubert
-            )
+            pred_hubert = self._index_retrieve(pred_hubert, index_rate, cosine_index)
 
         audio = _rvc_decode_chunked(
             self._rvc_net_g, self._rvc_sid, pred_hubert, comfort_f0,

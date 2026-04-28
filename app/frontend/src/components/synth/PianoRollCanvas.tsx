@@ -6,7 +6,7 @@ import { hitTest } from '../../lib/synth/noteInteraction';
 import { playNote } from '../../lib/synth/pitchPreview';
 import * as engine from '../../lib/synth/audioEngine';
 import { SNAP_OPTIONS, SNAP_ATOMS_ASC } from './PianoRollToolbar';
-import { renderVST } from '../../api/client';
+import { previewVSTNote } from '../../api/client';
 import LyricEditor from './LyricEditor';
 
 interface DragState {
@@ -30,6 +30,9 @@ export default function PianoRollCanvas() {
   const activeInstrumentPartIndex = useSynthStore(s => s.activeInstrumentPartIndex);
   const playbackPositionTicks = useSynthStore(s => s.playbackPositionTicks);
   const activeTool = useSynthStore(s => s.activeTool);
+  const ghostTracks = useSynthStore(s => s.ghostTracks);
+  const modelF0Global = useSynthStore(s => s.modelF0);
+  const trackModelF0 = useSynthStore(s => s.trackModelF0);
   const [size, setSize] = useState({ width: 800, height: 600 });
   const dragRef = useRef<DragState>({ mode: 'none', startX: 0, startY: 0, startTick: 0, startMidi: 0 });
   const [lyricEdit, setLyricEdit] = useState<{ partIndex: number; noteIndex: number; value: string } | null>(null);
@@ -47,8 +50,7 @@ export default function PianoRollCanvas() {
   // Track right-click on empty area for double-right-click → select tool
   const lastRightClickRef = useRef<{ time: number; x: number; y: number }>({ time: 0, x: 0, y: 0 });
 
-  /** Preview a note via VST backend render (instrument tracks).
-   *  Empty deps OK — reads state via getState() at call time. */
+  const vstPreviewAudioRef = useRef<HTMLAudioElement | null>(null);
   const playVSTPreview = useCallback((midi: number, durationSec?: number) => {
     const s = useSynthStore.getState();
     const instIdx = s.activeInstrumentPartIndex;
@@ -56,10 +58,19 @@ export default function PianoRollCanvas() {
     const instPart = s.project.instrument_parts[instIdx];
     const track = instPart ? s.project.tracks[instPart.track_no] : null;
     if (!track?.plugin_name) { playNote(midi, durationSec); return; }
-    const bpm = s.project.tempos[0]?.bpm ?? 120;
+    if (vstPreviewAudioRef.current) {
+      vstPreviewAudioRef.current.pause();
+      vstPreviewAudioRef.current = null;
+    }
     const dur = durationSec ?? 0.3;
-    renderVST({ plugin_name: track.plugin_name, notes: [{ tone: midi, velocity: 100, start: 0, duration: dur }], bpm })
-      .then(blob => { const url = URL.createObjectURL(blob); const a = new Audio(url); a.play(); a.onended = () => URL.revokeObjectURL(url); })
+    previewVSTNote(track.plugin_name, midi, 100, dur)
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const a = new Audio(url);
+        vstPreviewAudioRef.current = a;
+        a.play().catch(() => playNote(midi, durationSec));
+        a.onended = () => { URL.revokeObjectURL(url); if (vstPreviewAudioRef.current === a) vstPreviewAudioRef.current = null; };
+      })
       .catch(() => playNote(midi, durationSec));
   }, []);
 
@@ -183,6 +194,9 @@ export default function PianoRollCanvas() {
       if (nextPart) partEndTick = nextPart.position;
     }
 
+    const trackNo = activePart?.track_no ?? -1;
+    const isModelF0 = trackNo >= 0 ? (trackModelF0[trackNo] ?? modelF0Global) : modelF0Global;
+
     renderPianoRoll({
       ctx, width: size.width, height: size.height,
       project: project, viewState: viewState,
@@ -193,6 +207,8 @@ export default function PianoRollCanvas() {
       partEndTick,
       pitchToolActive: activeTool === 'pitch',
       hoverPitchPoint: hoverPitchPt,
+      ghostTracks,
+      modelF0Active: isModelF0,
     });
     // Draw selection rectangle
     if (selectRect) {
@@ -239,7 +255,7 @@ export default function PianoRollCanvas() {
         ctx.textAlign = 'left';
       }
     }
-  }, [size, project, viewState, selectedNotes, activePartIndex, activeInstrumentPartIndex, playbackPositionTicks, activeTool, hoverMidi, hoverPlayhead, ghostNote, lyricEdit, selectRect, hoverPitchPt]);
+  }, [size, project, viewState, selectedNotes, activePartIndex, activeInstrumentPartIndex, playbackPositionTicks, activeTool, hoverMidi, hoverPlayhead, ghostNote, lyricEdit, selectRect, hoverPitchPt, ghostTracks]);
 
   // Convert mouse event to canvas-local CSS-pixel coordinates.
   // Use nativeEvent.offsetX/Y which the browser computes directly,

@@ -1,0 +1,74 @@
+# Score2HuBERT v2 training config — Run 5: Drop JVS-MuSiC from train, pos/dur non-zero init.
+# Run 4 revealed: (1) pos_proj weights underutilized due to zero-init (norm 5.67 vs Xavier ~15.8);
+# (2) JVS-MuSiC's 100-singer averaging likely contaminates shared encoder toward less specific outputs.
+# Run 5 keeps JVS in val (for reference) but not in train.
+
+# Model (~55M params with LR pos/dur additions, default Kaiming init in Run 5)
+model:
+  n_phones: 80
+  hidden_dim: 512
+  hubert_dim: 768
+  n_enc_layers: 5
+  n_heads: 8
+  enc_kernel: 31
+  n_det_blocks: 6
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — ZH (ACE) + JA (7 datasets = 7.4h, JVS removed from train). NO GTSINGER. NO EN.
+data:
+  train_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/utau
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+    # jvs_music kept out of train (100-singer averaging contaminated Run 4 encoder)
+  val_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/utau
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+    - data/processed/jvs_music
+  max_frames: 500
+  num_workers: 8
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+  # Per-language sampling weights — JA upsampled to balance against ZH-dominated ACE.
+  # ACE 90K (zh) vs JA total 22.1K → unweighted batch composition zh ~80% / ja ~20%.
+  # ja×2.4 → effective zh ~63% / ja ~37%.
+  lang_weights:
+    zh: 1.0
+    ja: 2.4
+
+# Training
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1500
+  max_steps: 75000
+  val_interval: 2500
+  save_interval: 5000
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights — voicing reduced to limit overfit observed in Run 3
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05    # was 0.2 — Run 3 showed clear voicing overfit (5x train/val gap)
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 3

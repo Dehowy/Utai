@@ -1,11 +1,11 @@
-import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSynthStore } from '../../store/synthStore';
 import {
   renderTracks,
   getDirtyTrackIndices,
   getActiveTrackIndex,
-  trackNeedsRender,
+  abortRender,
+  createRenderAbort,
 } from '../../lib/synth/renderEngine';
 
 interface Props {
@@ -20,23 +20,15 @@ export default function RenderButton({ renderAll }: Props) {
   const renderError = useSynthStore(s => s.renderError);
   const setRenderStatus = useSynthStore(s => s.setRenderStatus);
   const setRenderError = useSynthStore(s => s.setRenderError);
-  const abortRef = useRef<AbortController | null>(null);
 
   const isArrangement = renderAll || viewMode === 'arrangement';
 
-  const handleStop = async () => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    try { await fetch('/api/synth/stop', { method: 'POST' }); } catch {}
-    setRenderStatus('idle');
-    setRenderError('');
-  };
+  const handleStop = () => abortRender();
 
   const handleRender = async () => {
     setRenderError('');
 
-    const ac = new AbortController();
-    abortRef.current = ac;
+    const ac = createRenderAbort();
     setRenderStatus('rendering');
 
     try {
@@ -63,22 +55,28 @@ export default function RenderButton({ renderAll }: Props) {
       const s = useSynthStore.getState();
       const voiceTracksWithoutModel = trackIndices.filter(i => {
         const track = s.project.tracks[i];
-        return track?.track_type === 'vocal' && !s.trackRvcModel[i] && !s.rvcModel;
+        return track?.track_type === 'vocal' && !s.trackRvcModel[i];
       });
       if (voiceTracksWithoutModel.length > 0) {
-        setRenderError(t('synth.needRvcModel', 'Please select an RVC model for vocal tracks first'));
-        trackIndices = trackIndices.filter(i => !voiceTracksWithoutModel.includes(i));
-        if (trackIndices.length === 0) {
-          setRenderStatus('error');
-          return;
-        }
+        setRenderError(t('synth.needRvcModel'));
+        setRenderStatus('error');
+        return;
+      }
+
+      const instTracksWithoutPlugin = trackIndices.filter(i => {
+        const track = s.project.tracks[i];
+        return track?.track_type === 'instrument' && !track.plugin_name;
+      });
+      if (instTracksWithoutPlugin.length > 0) {
+        setRenderError(t('synth.needVstPlugin'));
+        setRenderStatus('error');
+        return;
       }
 
       await renderTracks(trackIndices, ac.signal, (msg) => {
         setRenderError(msg);
       });
 
-      abortRef.current = null;
       setRenderError('');
       setRenderStatus('done');
     } catch (err: any) {
@@ -121,7 +119,7 @@ export default function RenderButton({ renderAll }: Props) {
           </button>
         )}
       </div>
-      {renderError && (
+      {renderStatus === 'error' && renderError && (
         <div style={{ color: 'var(--accent-red)', fontSize: 11, marginTop: 4, fontFamily: 'var(--font-pixel)' }}>
           {renderError}
         </div>

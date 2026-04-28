@@ -129,10 +129,16 @@ except Exception as e:
     print(json.dumps({{"ok": False, "error": str(e)}}))
 """
     try:
+        kw = {}
+        if sys.platform == "win32":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            kw["startupinfo"] = si
+            kw["creationflags"] = 0x08000000
         proc = subprocess.run(
             [sys.executable, "-c", script],
             capture_output=True, text=True, timeout=15,
-            cwd=str(Path(dll_path).parent),
+            cwd=str(Path(dll_path).parent), **kw,
         )
         stdout = proc.stdout.strip()
         # Find the last JSON line (skip JUCE warnings)
@@ -207,16 +213,17 @@ def render_midi(
         for idx, val in params.items():
             plugin.set_parameter(idx, val)
 
-    # Clear previous MIDI and add new notes
+    # Warmup: offset all notes by 50ms so the first note isn't swallowed
+    # by plugins that need initialization time (e.g. Ample Sound)
+    WARMUP = 0.05
     plugin.clear_midi()
     max_end = 0.0
     for n in notes:
-        start = float(n["start"])
+        start = float(n["start"]) + WARMUP
         dur = float(n["duration"])
         plugin.add_midi_note(int(n["tone"]), int(n.get("velocity", 100)), start, dur)
         max_end = max(max_end, start + dur)
 
-    # Render duration: auto-detect or use provided value (+1s tail for release)
     if duration_sec is None:
         duration_sec = max_end + 2.0
     duration_sec = max(duration_sec, 0.5)
@@ -227,13 +234,17 @@ def render_midi(
 
     audio = engine.get_audio()  # shape: (channels, samples)
 
-    # Mix down to stereo if needed
+    # Trim warmup silence from the start
+    trim_samples = int(WARMUP * sample_rate)
+    if audio.shape[1] > trim_samples:
+        audio = audio[:, trim_samples:]
+
+    # Mix down to stereo — take the first two channels (standard L/R pair)
     if audio.shape[0] > 2:
         audio = audio[:2]
     elif audio.shape[0] == 1:
         audio = np.vstack([audio, audio])
 
-    # Save to temp file
     out_dir = TEMP_DIR / "vst_render"
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{name}_{os.getpid()}.wav"
@@ -336,11 +347,17 @@ def open_editor(name: str) -> dict:
             raise FileNotFoundError("JUCE VST host not found. Build VST/host/ first.")
         cmd = [str(juce_exe), dll_path, state_path, owner_hwnd]
 
+    kw = {}
+    if sys.platform == "win32":
+        si = subprocess.STARTUPINFO()
+        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        si.wShowWindow = 1  # SW_SHOWNORMAL — editor must be visible
+        kw["startupinfo"] = si
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        cwd=str(PROJECT_ROOT),
+        cwd=str(PROJECT_ROOT), **kw,
     )
     _editor_processes[name] = proc
 
@@ -370,7 +387,13 @@ def close_editor(name: str) -> dict:
 def is_editor_open(name: str) -> bool:
     """Check if an editor subprocess is running."""
     proc = _editor_processes.get(name)
-    return proc is not None and proc.poll() is None
+    if proc is None:
+        return False
+    if proc.poll() is not None:
+        _editor_processes.pop(name, None)
+        _engine_cache.pop(name, None)
+        return False
+    return True
 
 
 def _apply_state_if_exists(name: str, plugin):

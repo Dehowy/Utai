@@ -643,6 +643,7 @@ body {
   border-right: 1px solid var(--border-dim);
   padding: 10px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex-shrink: 0;
   position: relative;
 }
@@ -651,7 +652,7 @@ body {
   content: '';
   position: absolute;
   top: 0;
-  right: -2px;
+  right: 0;
   bottom: 0;
   width: 1px;
   background: linear-gradient(180deg,
@@ -700,6 +701,9 @@ body {
   font-size: 12px;
   transition: all 0.12s;
   position: relative;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .utai-palette__item:hover {

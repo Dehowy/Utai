@@ -1,0 +1,64 @@
+# Score2HuBERT v2 training config — Run 7: Kiritan-only SMALL model.
+# Run 6 (54M on 0.96h Kiritan) overfit (val cos 0.80, listens "messy"),
+# confirming model was over-parameterized for single-dataset single-language task.
+# Shrunk to ~24M (DiffSinger-scale) with proportional capacity reduction.
+#
+# Why each change:
+#   - n_enc_layers 5→4: less depth, fewer attn params
+#   - hidden_dim 512→384: ~44% param reduction across all linear layers
+#   - n_heads 8→6: maintains 64-dim per head (384/6), same as before (512/8)
+#   - n_det_blocks 6→4: fewer conv blocks, less memorization capacity
+#
+# All other choices identical to Run 6 (single-dataset Kiritan JA).
+
+# Model (~24M expected)
+model:
+  n_phones: 80
+  hidden_dim: 384       # 512→384
+  hubert_dim: 768       # keep — downstream RVC expects 768
+  n_enc_layers: 4       # 5→4
+  n_heads: 6            # 8→6 (384/6=64 per head)
+  enc_kernel: 31
+  n_det_blocks: 4       # 6→4
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — same as Run 6: Kiritan only
+data:
+  train_dirs:
+    - data/processed/kiritan
+  val_dirs:
+    - data/processed/kiritan
+    - data/processed/oniku            # generalization observer
+    - data/processed/jvs_music        # generalization observer
+  max_frames: 500
+  num_workers: 4
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+
+# Training — same as Run 6
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 20000
+  val_interval: 1000
+  save_interval: 2500
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 5

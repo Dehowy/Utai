@@ -1,0 +1,65 @@
+# Score2HuBERT v2 training config — Run 6: Kiritan-only JA test.
+# Hypothesis: cross-dataset phoneme/SP contamination (audit 2026-04-14) is the
+# main quality blocker. Single-dataset single-language training (v1 Plan C
+# template with ACE-only worked; this is the JA mirror) should sidestep ALL
+# contamination findings at once.
+#
+# DiffSinger precedent: full score→mel trained on Kiritan-only (0.96h) worked.
+# Our task is simpler (output HuBERT, not mel). Data volume is sufficient.
+#
+# val_dirs includes oniku + jvs_music as generalization observers (NOT trained
+# on). Expect aggregate val cos to be "bad" there because domain shift — the
+# real signal is Kiritan val quality + audio A/B.
+
+# Model (~55M params — same as Run 4/5)
+model:
+  n_phones: 80
+  hidden_dim: 512
+  hubert_dim: 768
+  n_enc_layers: 5
+  n_heads: 8
+  enc_kernel: 31
+  n_det_blocks: 6
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — Kiritan only (~0.96h, 730 samples). No ACE, no UTAU, no other.
+data:
+  train_dirs:
+    - data/processed/kiritan
+  val_dirs:
+    - data/processed/kiritan          # primary val
+    - data/processed/oniku            # generalization observer (not trained)
+    - data/processed/jvs_music        # generalization observer (not trained)
+  max_frames: 500
+  num_workers: 4
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+  # No lang_weights — single language.
+
+# Training — fewer total steps (small dataset, overfit risk), more frequent val
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 500
+  max_steps: 20000
+  val_interval: 1000     # was 2500 — catch overfit earlier
+  save_interval: 2500
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights — same as Run 5
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 5    # keep more mid checkpoints — overfit sweet spot likely mid-training

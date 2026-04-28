@@ -112,10 +112,7 @@ def apply_effects(
         audio = np.stack([audio, audio])
     else:
         audio = audio.T  # (samples, ch) → (ch, samples)
-    if sr != sample_rate:
-        import soxr
-        audio = np.stack([soxr.resample(audio[i], sr, sample_rate) for i in range(audio.shape[0])])
-        sr = sample_rate
+    sample_rate = sr
 
     for fx in effects:
         fx_type = fx.get("type", "")
@@ -206,7 +203,12 @@ def _apply_world_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
         sp_new = np.array([np.interp(new_t, old_t, sp_new[:, j]) for j in range(sp_new.shape[1])]).T
         ap = np.array([np.interp(new_t, old_t, ap[:, j]) for j in range(ap.shape[1])]).T
 
-    y = pw.synthesize(f0_new, sp_new, np.ascontiguousarray(ap), sr)
+    y = pw.synthesize(
+        np.ascontiguousarray(f0_new),
+        np.ascontiguousarray(sp_new),
+        np.ascontiguousarray(ap),
+        sr,
+    )
     y = y.astype(np.float32)
 
     return np.stack([y, y])
@@ -215,30 +217,39 @@ def _apply_world_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
 # ── PlaybackWarp pitch/speed ──
 
 def _apply_warp_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
-    """dawdreamer PlaybackWarp — general pitch/speed shift."""
-    import dawdreamer as daw
-
+    """Pitch/speed shift. Pure speed change uses fast resampling; pitch shift uses dawdreamer."""
     semitones = float(params.get("semitones", 0))
     speed = float(params.get("speed", 1.0))
 
     if semitones == 0 and speed == 1.0:
         return audio
 
+    if semitones == 0:
+        try:
+            import soxr
+            resampled = np.stack([
+                soxr.resample(audio[ch].astype(np.float32), sr, int(sr * speed))
+                for ch in range(audio.shape[0])
+            ])
+            return resampled
+        except ImportError:
+            pass
+
+    import dawdreamer as daw
     engine = daw.RenderEngine(sample_rate=sr, block_size=512)
     pwp = engine.make_playbackwarp_processor("warp", audio.astype(np.float32))
     pwp.transpose = semitones
-    pwp.time_ratio = 1.0 / speed  # time_ratio > 1 = slower
+    pwp.time_ratio = 1.0 / speed
     engine.load_graph([(pwp, [])])
 
-    duration = (audio.shape[1] / sr) / speed + 1.0  # extra second for tail
+    duration = (audio.shape[1] / sr) / speed + 1.0
     engine.render(duration)
     result = engine.get_audio()
 
-    # Trim silence at end
     peak = np.max(np.abs(result), axis=0)
     last_nonzero = np.where(peak > 0.0001)[0]
     if len(last_nonzero) > 0:
-        result = result[:, :last_nonzero[-1] + sr]  # keep 1s tail
+        result = result[:, :last_nonzero[-1] + sr]
 
     return result
 

@@ -9,7 +9,7 @@ import SplitPane from '../components/synth/SplitPane'
 import NetworkSettings from '../components/NetworkSettings'
 import { useAppStore } from '../store/appStore'
 import { getSegmentClipboard, setSegmentClipboard, pasteSegment, isDragging } from '../components/synth/ArrangementView'
-import { saveProject } from '../components/synth/SynthProjectMenu'
+import { saveProject, getSynthSettings } from '../components/synth/SynthProjectMenu'
 import { ToastContainer } from '../components/Toast'
 import PianoRollPanel from '../components/synth/PianoRollPanel'
 import ControlPanel from '../components/synth/ControlPanel'
@@ -19,87 +19,144 @@ import { useSynthStore } from '../store/synthStore'
 function useAutoRenderEffects() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const trackEffects = useSynthStore(s => s.trackEffects);
-  const trackFingerprint = useSynthStore(s =>
-    s.project.tracks.map(t => `${t.volume}|${t.pan}`).join(',')
-  );
+  const runningRef = useRef(false);
+  const pendingRef = useRef(false);
+  const prevFxRef = useRef<string>('');
 
-  const doRender = useCallback(async () => {
-    if (isDragging()) return;
+  const doRender = useCallback(async (ctrl: AbortController) => {
+    if (isDragging() || runningRef.current) { pendingRef.current = true; return; }
+    runningRef.current = true;
+    pendingRef.current = false;
 
-    abortRef.current?.abort();
-    const ctrl = new AbortController();
-    abortRef.current = ctrl;
+    try {
+      const state = useSynthStore.getState();
+      const { applyEffectsUpload } = await import('../api/client');
 
-    const state = useSynthStore.getState();
-    for (const track of state.project.tracks) {
-      const trackIdx = state.project.tracks.indexOf(track);
-      if (ctrl.signal.aborted) break;
-
-      if (track.track_type === 'audio') {
-        const waveParts = state.project.wave_parts.filter(wp => wp.track_no === trackIdx);
-        if (waveParts.length === 0) continue;
+      for (let trackIdx = 0; trackIdx < state.project.tracks.length; trackIdx++) {
+        const track = state.project.tracks[trackIdx];
+        if (ctrl.signal.aborted) break;
 
         const effects = (state.trackEffects[trackIdx] || [])
           .filter(fx => fx.enabled)
           .map(fx => ({ type: fx.type, params: fx.params, enabled: true }));
 
-        for (const wp of waveParts) {
-          if (!wp.buffer_id || ctrl.signal.aborted) continue;
-          try {
-            const res = await fetch(`/api/audio/${wp.buffer_id}/apply-effects`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ effects, volume_db: track.volume, pan: track.pan }),
-              signal: ctrl.signal,
-            });
-            if (!res.ok || ctrl.signal.aborted) continue;
-            const data = await res.json();
-            if (data.buffer_id && !ctrl.signal.aborted) {
-              const { getAudioURL } = await import('../api/client');
-              useSynthStore.getState().setTrackAudioUrl(trackIdx, getAudioURL(data.buffer_id));
+        if (track.track_type === 'audio') {
+          const waveParts = state.project.wave_parts.filter(wp => wp.track_no === trackIdx && wp.buffer_id);
+          if (effects.length === 0) {
+            let needsProjectUpdate = false;
+            const proj = JSON.parse(JSON.stringify(useSynthStore.getState().project));
+            for (const wp of waveParts) {
+              const bid = wp.buffer_id!;
+              const prev = useSynthStore.getState().waveFxUrls[bid];
+              if (prev) {
+                URL.revokeObjectURL(prev);
+                const next = { ...useSynthStore.getState().waveFxUrls };
+                delete next[bid];
+                const peakNext = { ...useSynthStore.getState().peakData };
+                delete peakNext[`fx:${bid}`];
+                useSynthStore.setState({ waveFxUrls: next, peakData: peakNext });
+              }
+              const wpIdx = proj.wave_parts.findIndex((w2: any) => w2.buffer_id === bid);
+              if (wpIdx >= 0 && proj.wave_parts[wpIdx]._origDurationMs) {
+                proj.wave_parts[wpIdx].file_duration_ms = proj.wave_parts[wpIdx]._origDurationMs;
+                delete proj.wave_parts[wpIdx]._origDurationMs;
+                needsProjectUpdate = true;
+              }
             }
-          } catch { /* aborted or failed */ }
+            if (needsProjectUpdate) useSynthStore.setState({ project: proj });
+            continue;
+          }
+          useSynthStore.setState({ audioFxRendering: { ...useSynthStore.getState().audioFxRendering, [trackIdx]: true } });
+          for (const wp of waveParts) {
+            const bid = wp.buffer_id!;
+            const prevFxUrl = useSynthStore.getState().waveFxUrls[bid];
+            const origDurationMs = wp._origDurationMs ?? wp.file_duration_ms;
+            try {
+              const rawBlob = await fetch(`/api/audio/${bid}`).then(r => r.blob());
+              const fxBlob = await applyEffectsUpload(rawBlob, effects);
+              if (prevFxUrl) URL.revokeObjectURL(prevFxUrl);
+              const fxUrl = URL.createObjectURL(fxBlob);
+              useSynthStore.setState({ waveFxUrls: { ...useSynthStore.getState().waveFxUrls, [bid]: fxUrl } });
+              try {
+                const { loadAudioBuffer } = await import('../lib/synth/audioEngine');
+                const audioBuf = await loadAudioBuffer(fxUrl);
+                const newDurationMs = audioBuf.duration * 1000;
+                const ch = audioBuf.getChannelData(0);
+                const w = 4000;
+                const peaks = new Float32Array(w);
+                const step = Math.max(1, Math.floor(ch.length / w));
+                for (let i = 0; i < w; i++) {
+                  let max = 0;
+                  const off = i * step;
+                  for (let j = 0; j < step && off + j < ch.length; j++) max = Math.max(max, Math.abs(ch[off + j]));
+                  peaks[i] = max;
+                }
+                useSynthStore.getState().setPeakData(`fx:${bid}`, peaks);
+                const proj = useSynthStore.getState().project;
+                const wpIdx = proj.wave_parts.findIndex(w2 => w2.buffer_id === bid);
+                if (wpIdx >= 0) {
+                  const updated = JSON.parse(JSON.stringify(proj));
+                  updated.wave_parts[wpIdx]._origDurationMs = origDurationMs;
+                  updated.wave_parts[wpIdx].file_duration_ms = newDurationMs;
+                  useSynthStore.setState({ project: updated });
+                }
+              } catch { /* peak/duration update failed */ }
+            } catch { /* fx processing failed */ }
+          }
+          useSynthStore.setState({ audioFxRendering: { ...useSynthStore.getState().audioFxRendering, [trackIdx]: false } });
+          continue;
         }
-      } else if (track.track_type === 'vocal') {
+
         const rawUrl = state.trackRawAudioUrls[trackIdx];
         if (!rawUrl) continue;
 
-        const effects = (state.trackEffects[trackIdx] || [])
-          .filter(fx => fx.enabled)
-          .map(fx => ({ type: fx.type, params: fx.params, enabled: true }));
+        const prevUrl = state.trackAudioUrls[trackIdx];
+
         if (effects.length === 0) {
+          if (prevUrl && prevUrl !== rawUrl) URL.revokeObjectURL(prevUrl);
           useSynthStore.getState().setTrackAudioUrl(trackIdx, rawUrl);
+          if (track.track_type === 'vocal') useSynthStore.getState().setFinalUrl(rawUrl);
           continue;
         }
 
         try {
-          const rawRes = await fetch(rawUrl, { signal: ctrl.signal });
-          if (!rawRes.ok || ctrl.signal.aborted) continue;
-          const rawBlob = await rawRes.blob();
-          const { applyEffectsUpload } = await import('../api/client');
+          const rawBlob = await fetch(rawUrl).then(r => r.blob());
+          if (ctrl.signal.aborted) continue;
           const fxBlob = await applyEffectsUpload(rawBlob, effects);
-          if (!ctrl.signal.aborted) {
-            useSynthStore.getState().setTrackAudioUrl(trackIdx, URL.createObjectURL(fxBlob));
-          }
+          if (ctrl.signal.aborted) continue;
+          if (prevUrl && prevUrl !== rawUrl) URL.revokeObjectURL(prevUrl);
+          const fxUrl = URL.createObjectURL(fxBlob);
+          useSynthStore.getState().setTrackAudioUrl(trackIdx, fxUrl);
+          if (track.track_type === 'vocal') useSynthStore.getState().setFinalUrl(fxUrl);
         } catch { /* aborted or failed */ }
+      }
+    } finally {
+      runningRef.current = false;
+      if (pendingRef.current && !ctrl.signal.aborted) {
+        pendingRef.current = false;
+        const next = new AbortController();
+        abortRef.current = next;
+        setTimeout(() => doRender(next), 300);
       }
     }
   }, []);
 
   useEffect(() => {
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(doRender, 600);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [trackEffects, trackFingerprint, doRender]);
+    const unsub = useSynthStore.subscribe((state) => {
+      const snap = JSON.stringify(state.trackEffects);
+      if (snap === prevFxRef.current) return;
+      prevFxRef.current = snap;
 
-  useEffect(() => {
-    const onDragEnd = () => {
       if (timerRef.current) clearTimeout(timerRef.current);
-      timerRef.current = setTimeout(doRender, 300);
-    };
-    window.addEventListener('utai-drag-end', onDragEnd);
-    return () => window.removeEventListener('utai-drag-end', onDragEnd);
+      abortRef.current?.abort();
+
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
+      timerRef.current = setTimeout(() => {
+        if (!runningRef.current) doRender(ctrl);
+      }, 600);
+    });
+    return () => { unsub(); if (timerRef.current) clearTimeout(timerRef.current); };
   }, [doRender]);
 }
 
@@ -107,26 +164,40 @@ function flushAutosave() {
   const s = useSynthStore.getState();
   return fetch('/api/synth/project/autosave', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: { language: s.language, trackLanguage: s.trackLanguage, rvcModel: s.rvcModel, trackRvcModel: s.trackRvcModel, muteStrategy: s.muteStrategy, trackMuteStrategy: s.trackMuteStrategy, globalF0Offset: s.globalF0Offset } }),
+    body: JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: getSynthSettings() }),
   }).catch(() => {});
 }
 
 function useAutoSave() {
-  const dirty = useSynthStore(s => s.dirty);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const saveGenRef = useRef(0);
 
+  // Debounce-save on ANY state change (500ms). No dirty gate — every change is
+  // worth preserving so recovery never loses settings, RVC models, or toggles.
   useEffect(() => {
-    if (!dirty) return;
-    saveGenRef.current++;
-    const gen = saveGenRef.current;
-    if (timerRef.current) clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(async () => {
-      if (gen !== saveGenRef.current) return;
-      try { await flushAutosave(); } catch { /* silent */ }
-    }, 10000);
-    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
-  }, [dirty]);
+    const unsub = useSynthStore.subscribe(() => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        const s = useSynthStore.getState();
+        if (s.project.voice_parts.length > 0 || s.project.wave_parts.length > 0 || s.project.instrument_parts.length > 0) {
+          flushAutosave().catch(() => {});
+        }
+      }, 500);
+    });
+    return () => { unsub(); if (timerRef.current) clearTimeout(timerRef.current); };
+  }, []);
+
+  // Save on page unload (F5, tab close, navigation)
+  useEffect(() => {
+    const onUnload = () => {
+      const s = useSynthStore.getState();
+      if (s.project.voice_parts.length > 0 || s.project.wave_parts.length > 0 || s.project.instrument_parts.length > 0) {
+        const blob = new Blob([JSON.stringify({ project: s.project, trackEffects: s.trackEffects, settings: getSynthSettings() })], { type: 'application/json' });
+        navigator.sendBeacon('/api/synth/project/autosave', blob);
+      }
+    };
+    window.addEventListener('beforeunload', onUnload);
+    return () => window.removeEventListener('beforeunload', onUnload);
+  }, []);
 
   // Listen for force-autosave from Electron main (native fallback quit path)
   useEffect(() => {
@@ -136,26 +207,36 @@ function useAutoSave() {
   }, []);
 }
 
-let _autoRecoverDone = false;
 function useAutoRecover() {
+  const doneRef = useRef(false);
   useEffect(() => {
-    if (_autoRecoverDone) return;
-    _autoRecoverDone = true;
+    if (doneRef.current) return;
+    doneRef.current = true;
     (async () => {
       try {
         const res = await fetch('/api/synth/project/autosave');
         const data = await res.json();
         if (data.available && data.project) {
-          const { utaiConfirm } = await import('../components/UtaiAlert');
-          const { showToast } = await import('../components/Toast');
-          const recover = await utaiConfirm('Recovered unsaved project from last session. Restore?');
-          if (recover) {
-            const { applyOpenedProject } = await import('../components/synth/SynthProjectMenu');
-            applyOpenedProject(data);
-            useSynthStore.setState({ dirty: true });
-            showToast('Project recovered', 'success');
+          const proj = data.project;
+          const hasContent =
+            (proj.voice_parts || []).some((vp: any) => vp.notes?.length > 0) ||
+            (proj.wave_parts || []).length > 0 ||
+            (proj.instrument_parts || []).some((ip: any) => ip.notes?.length > 0);
+          if (!hasContent) {
+            await fetch('/api/synth/project/autosave', { method: 'DELETE' });
+          } else {
+            const { utaiConfirm } = await import('../components/UtaiAlert');
+            const { showToast } = await import('../components/Toast');
+            const i18n = (await import('../i18n/i18n')).default;
+            const recover = await utaiConfirm(i18n.t('synth.recoverProject'));
+            if (recover) {
+              const { applyOpenedProject } = await import('../components/synth/SynthProjectMenu');
+              applyOpenedProject(data);
+              showToast('Project recovered', 'success');
+            } else {
+              await fetch('/api/synth/project/autosave', { method: 'DELETE' });
+            }
           }
-          await fetch('/api/synth/project/autosave', { method: 'DELETE' });
         }
       } catch { /* no autosave available */ }
     })();

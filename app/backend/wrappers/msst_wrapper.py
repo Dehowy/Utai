@@ -129,13 +129,37 @@ class MSSTWrapper:
         """Public API to get stems for a model."""
         return self._get_model_stems(model_filename)
 
+    def _detect_dim_from_checkpoint(self, model_filename: str) -> int | None:
+        """Quick-load checkpoint to detect model dim from weights."""
+        import torch
+        info = self._models_info.get(model_filename, {})
+        model_class = info.get("model_class", "")
+        ckpt_path = self._msst_root / "pretrain" / model_class / model_filename
+        if not ckpt_path.exists():
+            return None
+        try:
+            sd = torch.load(str(ckpt_path), map_location="cpu", weights_only=True)
+            for key in ("layers.0.0.layers.0.0.norm.gamma", "layers.0.0.norm.gamma"):
+                if key in sd:
+                    return sd[key].shape[0]
+        except Exception:
+            pass
+        return None
+
+    def _read_config_dim(self, config_path: Path) -> int | None:
+        """Read 'dim' from a YAML config without full parsing."""
+        import re
+        try:
+            text = config_path.read_text(encoding="utf-8")
+            m = re.search(r"^\s*dim:\s*(\d+)", text, re.MULTILINE)
+            return int(m.group(1)) if m else None
+        except Exception:
+            return None
+
     def _find_config_for_model(self, model_filename: str) -> Path | None:
         """Find the YAML config file that matches a model filename.
 
-        MSST stores per-model configs under:
-          configs/{model_class}/{model_filename}.yaml  (exact match, highest priority)
-        and generic type configs under:
-          configs/config_vocals_{model_type}.yaml  (fallback)
+        Priority: exact name match > dim-matched config from subdirs > generic fallback.
         """
         configs_dir = self._msst_root / "configs"
         if not configs_dir.exists():
@@ -144,31 +168,42 @@ class MSSTWrapper:
         info = self._models_info.get(model_filename, {})
         model_class = info.get("model_class", "")
         model_type = info.get("model_type", "")
+        model_stem = Path(model_filename).stem
 
-        # 1) Exact per-model config: configs/{model_class}/{model_filename}.yaml
+        # 1) Exact per-model config by name
         if model_class:
-            exact = configs_dir / model_class / f"{model_filename}.yaml"
-            if exact.exists():
-                return exact
-
-        # 2) Search all subdirectories for {model_filename}.yaml
-        for cfg in configs_dir.rglob(f"{model_filename}.yaml"):
+            for name in [model_filename, model_stem]:
+                exact = configs_dir / model_class / f"{name}.yaml"
+                if exact.exists():
+                    return exact
+        for cfg in configs_dir.rglob(f"{model_stem}.yaml"):
             return cfg
 
-        # 3) Fallback: generic config by model_type in configs/*.yaml
-        if model_type:
-            candidates = []
-            for cfg in configs_dir.glob("*.yaml"):
-                cfg_stem = cfg.stem.lower()
-                if model_type in cfg_stem:
-                    candidates.append(cfg)
-            if len(candidates) == 1:
-                return candidates[0]
-            if candidates:
-                candidates.sort(key=lambda c: len(c.stem))
-                return candidates[0]
+        # 2) Collect all candidates matching model_type, then pick by dim
+        if not model_type:
+            return None
+        candidates = []
+        for cfg in configs_dir.rglob("*.yaml"):
+            if model_type in cfg.stem.lower():
+                candidates.append(cfg)
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
 
-        return None
+        ckpt_dim = self._detect_dim_from_checkpoint(model_filename)
+        if ckpt_dim:
+            dim_matched = [c for c in candidates if self._read_config_dim(c) == ckpt_dim]
+            if dim_matched:
+                dim_matched.sort(key=lambda c: (
+                    0 if "viperx" in str(c) else 1,
+                    0 if "vocal" in c.stem.lower() else 1,
+                    len(c.stem),
+                ))
+                return dim_matched[0]
+
+        candidates.sort(key=lambda c: len(c.stem))
+        return candidates[0]
 
     def _read_stems_from_config(self, config_path: Path) -> list[str]:
         """Read instrument list from a config YAML.
@@ -228,7 +263,8 @@ class MSSTWrapper:
             raise FileNotFoundError(f"Config not found for model: {model_name}")
 
         if progress_callback:
-            await progress_callback(0.2, f"Loading {model_name}...")
+            await progress_callback(0.15, f"Model: {model_name} ({model_type})")
+            await progress_callback(0.2, f"Config: {config_path.name}")
 
         from app.backend.config import get_device
 

@@ -1,43 +1,47 @@
-# Python
+# ── Python ──────────────────────────────────────────────
 venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 *.egg
-dist/
-build/
 .eggs/
-*.whl
 
-# Node.js
+# ── Node.js ─────────────────────────────────────────────
 node_modules/
 app/frontend/dist/
+app/frontend/tsconfig.tsbuildinfo
 
-# Built frontend served by backend
+# ── Built frontend served by backend ────────────────────
 app/backend/static/*
 !app/backend/static/.gitkeep
 
-# Temp and output files
+# ── Temp and output files ───────────────────────────────
 app/temp/
 app/output/
+logs/
 
-# Built Electron app (entire portable bundle)
+# ── Built Electron app (entire portable bundle) ────────
 Utai/
 
-# External tools (bundled, not source-managed)
-# ffmpeg / ffprobe binaries (anywhere in tree)
+# ── External tools ──────────────────────────────────────
 **/ffmpeg.exe
 **/ffprobe.exe
 bin/*.dll
-
-# yt-dlp source (cloned separately)
 yt-dlp/
 
-# MSST
-# MSST virtual environment
-MSST/.venv/
+# ── SOFA (forced phoneme alignment tool, clone separately) ──
+SOFA/
 
-# Downloaded separation models (users download their own)
+# ── Website (separate repo) ─────────────────────────────
+Utai_website/
+
+# ── Legacy standalone (reference only) ──────────────────
+UtaiSynthesizer/
+
+# ── MSST ────────────────────────────────────────────────
+MSST/.venv/
+MSST/tmpdir/
+MSST/logs/
 MSST/pretrain/vocal_models/*.ckpt
 MSST/pretrain/vocal_models/*.pth
 MSST/pretrain/vocal_models/*.th
@@ -48,16 +52,13 @@ MSST/pretrain/single_stem_models/*.ckpt
 MSST/pretrain/single_stem_models/*.pth
 MSST/pretrain/single_stem_models/*.th
 MSST/pretrain/VR_Models/*.pth
-MSST/tmpdir/
 
-# RVC
-# User-trained models and training data
+# ── RVC ─────────────────────────────────────────────────
 RVC/*/assets/weights/*.pth
+RVC/*/assets/weights/*.json
 RVC/*/assets/indices/*.index
 RVC/*/logs/
 !RVC/*/logs/mute/
-
-# Pretrained base models (large, downloaded separately)
 RVC/**/assets/pretrained/*.pth
 RVC/**/assets/pretrained_v2/*.pth
 RVC/**/assets/hubert/*.pt
@@ -67,8 +68,7 @@ RVC/**/assets/rmvpe/*.pth
 RVC/**/assets/rmvpe/*.onnx
 RVC/**/assets/*.pth
 
-# VST plugins (user-managed — large binaries, samples, state files)
-# Raw plugin directories (users bring their own .dll/.vst3)
+# ── VST ─────────────────────────────────────────────────
 VST/4fpiano-win/
 VST/AmpleBass/
 VST/AmpleGuitar/
@@ -77,56 +77,80 @@ VST/Sonatina_*/
 VST/Dexed*/
 VST/*.clap
 VST/*.exe
-# Imported plugins (generated on import — user-specific)
 VST/instruments/*/
-# JUCE framework (cloned separately)
 VST/juce/
-# JUCE host build artifacts
 VST/host/build/
 VST/host/UtaiVSTHost.exe
+VST_instruments/
 
-# Synth (UtaiSynth — DiffSinger + OpenUtau integration)
-# Pre-compiled renderer binaries (large, platform-specific, rebuild from utai-renderer-src/)
-synth/utai-renderer/**/*.exe
-synth/utai-renderer/**/*.dll
-synth/utai-renderer/**/*.so
-synth/utai-renderer/**/*.dylib
-synth/utai-renderer/**/*.pdb
-synth/utai-renderer/**/*.lib
-synth/utai-renderer/runtimes/
-synth/utai-renderer/Cache/
-synth/utai-renderer/notepresets.json
-# OpenUtau source (cloned for building renderer, not committed)
+# ── Synth ───────────────────────────────────────────────
+synth/utai-renderer/
 synth/OpenUtau-DiffSinger-Lunai/
-# Renderer build artifacts
 synth/utai-renderer-src/bin/
 synth/utai-renderer-src/obj/
-# DiffSinger voice banks (large, user-managed via Model Manager)
 synth/Singers/*/
-synth/utai-renderer/Singers/*/
-# UtaiSynthesizer standalone (reference only, to be removed)
-UtaiSynthesizer/
+synth/models/
+synth/archive/
 
-# Electron
+# ── Score2HuBERT (v1 — exploration/reference) ──────────
+score2hubert/checkpoints/
+score2hubert/data/
+score2hubert/test_outputs*/
+score2hubert/logs/
+score2hubert/GTSinger/
+score2hubert/kiritan/
+score2hubert/RVC
+score2hubert/venv/
+score2hubert/.claude/
+score2hubert/configs_backup*/
+score2hubert/src_backup*/
+score2hubert/docs_backup*/
+score2hubert/scripts_backup*/
+score2hubert/=*
+
+# ── Score2HuBERT v2 (production) ───────────────────────
+score2hubert_v2/checkpoints/
+score2hubert_v2/archive/
+score2hubert_v2/test_outputs/
+score2hubert_v2/logs/
+score2hubert_v2/data
+score2hubert_v2/GTSinger
+score2hubert_v2/kiritan
+score2hubert_v2/RVC
+score2hubert_v2/venv
+score2hubert_v2/.claude/
+score2hubert_v2/jvs_music_ver1/
+score2hubert_v2/Natsume_Singing_DB_0713/
+score2hubert_v2/ONIKU_KURUMI_UTAGOE_DB/
+score2hubert_v2/OFUTON_P_UTAGOE_DB/
+
+# ── Installer ───────────────────────────────────────────
+installer/node_modules/
+installer/dist/
+installer/archive/
+installer/bundle/
+
+# ── Electron ────────────────────────────────────────────
 electron/node_modules/
+electron/build/
 
-# IDE / Editor
+# ── IDE / Editor ────────────────────────────────────────
 .vscode/
 .idea/
 *.swp
 *.swo
 .claude/
 
-# OS
+# ── OS ──────────────────────────────────────────────────
 Thumbs.db
 Desktop.ini
 .DS_Store
 ehthumbs.db
 
-# Experiments (isolated from main codebase)
+# ── Experiments ─────────────────────────────────────────
 experiments/
 
-# Environment / Secrets
+# ── Environment / Secrets ───────────────────────────────
 .env
 .env.*
 *.log

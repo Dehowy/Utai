@@ -73,6 +73,10 @@ interface SynthState {
   pitchSnap: boolean;
   affineTransform: boolean;                    // global affine pitch transform toggle
   trackAffineTransform: Record<number, boolean>; // per-track override
+  cosineIndex: boolean;                         // global cosine-normalized index retrieval
+  modelF0: boolean;                             // global model-predicted F0 toggle
+  trackModelF0: Record<number, boolean>;        // per-track override
+  ghostTracks: number[];  // track indices to show as reference overlay in piano roll
 
   // Render
   renderStatus: 'idle' | 'rendering' | 'converting' | 'done' | 'error';
@@ -90,6 +94,8 @@ interface SynthState {
   arrScrollY: number;  // arrangement vertical scroll (separate from pianoroll scrollY)
   trackAudioUrls: Record<number, string>;  // trackIndex → rendered blob URL (post-effects)
   trackRawAudioUrls: Record<number, string>;  // trackIndex → raw S2H output (pre-effects)
+  waveFxUrls: Record<string, string>;  // buffer_id → effected blob URL (audio tracks)
+  audioFxRendering: Record<number, boolean>;  // trackIndex → true while effects are processing
   peakData: Record<string, Float32Array>;  // buffer_id → peak array
   trackEffects: Record<number, TrackEffect[]>;  // trackIndex → effect chain
   trackRenderedSnapshot: Record<number, string>;  // trackIndex → fingerprint at render time
@@ -169,6 +175,10 @@ interface SynthState {
   togglePitchSnap: () => void;
   setAffineTransform: (enabled: boolean) => void;
   setTrackAffineTransform: (trackIndex: number, enabled: boolean) => void;
+  setCosineIndex: (enabled: boolean) => void;
+  setModelF0: (enabled: boolean) => void;
+  setTrackModelF0: (trackIndex: number, enabled: boolean) => void;
+  toggleGhostTrack: (trackIndex: number) => void;
   rvcModelListVersion: number;
   bumpRvcModelList: () => void;
 
@@ -288,6 +298,10 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   pitchSnap: true,
   affineTransform: false,
   trackAffineTransform: {},
+  cosineIndex: true,
+  modelF0: false,
+  trackModelF0: {},
+  ghostTracks: [],
   renderStatus: 'idle',
   renderedUrl: null,
   finalUrl: null,
@@ -301,6 +315,8 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   arrScrollY: 0,
   trackAudioUrls: {},
       trackRawAudioUrls: {},
+      waveFxUrls: {},
+      audioFxRendering: {},
   peakData: {},
   trackEffects: {},
   trackRenderedSnapshot: {},
@@ -316,9 +332,21 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   loadProject: (project) => set((state) => {
     for (const url of Object.values(state.trackAudioUrls)) { if (url) URL.revokeObjectURL(url); }
     if (state.finalUrl) URL.revokeObjectURL(state.finalUrl);
+    const trackLanguage: Record<number, string> = {};
+    for (const vp of project.voice_parts || []) {
+      if (trackLanguage[vp.track_no]) continue;
+      const allLyrics = vp.notes.map((n: any) => n.lyric || '').join('');
+      if (allLyrics.length > 0) {
+        const jaCount = [...allLyrics].filter(c => {
+          const cp = c.codePointAt(0) || 0;
+          return (cp >= 0x3040 && cp <= 0x309F) || (cp >= 0x30A0 && cp <= 0x30FF);
+        }).length;
+        trackLanguage[vp.track_no] = jaCount / allLyrics.length > 0.5 ? 'ja' : 'zh';
+      }
+    }
     return {
       project,
-      dirty: false,
+      dirty: true,
       undoStack: [],
       redoStack: [],
       selectedNotes: new Set(),
@@ -336,14 +364,23 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       arrScrollY: 0,
       trackAudioUrls: {},
       trackRawAudioUrls: {},
+      waveFxUrls: {},
+      audioFxRendering: {},
       peakData: {},
       trackEffects: {},
       trackRenderedSnapshot: {},
       trackRvcModel: {},
-      trackLanguage: {},
+      trackLanguage,
       trackIndexRate: {},
       trackF0Offset: {},
       trackMuteStrategy: {},
+      trackAffineTransform: {},
+      cosineIndex: true,
+      modelF0: false,
+      trackModelF0: {},
+      ghostTracks: [],
+      affineTransform: false,
+      globalF0Offset: 0,
       projectPath: null,
       renderedUrl: null,
       finalUrl: null,
@@ -375,14 +412,24 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       arrScrollY: 0,
       trackAudioUrls: {},
       trackRawAudioUrls: {},
+      waveFxUrls: {},
+      audioFxRendering: {},
       peakData: {},
       trackEffects: {},
       trackRenderedSnapshot: {},
+      rvcModel: '',
       trackRvcModel: {},
       trackLanguage: {},
       trackIndexRate: {},
       trackF0Offset: {},
       trackMuteStrategy: {},
+      trackAffineTransform: {},
+      cosineIndex: true,
+      modelF0: false,
+      trackModelF0: {},
+      ghostTracks: [],
+      affineTransform: false,
+      globalF0Offset: 0,
       projectPath: null,
       renderedUrl: null,
       finalUrl: null,
@@ -577,7 +624,6 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     const part = state.project.voice_parts[partIndex];
     const scrollX = part ? part.position * state.viewState.pixelsPerTick : 0;
     const trackNo = part?.track_no ?? -1;
-    const trackModel = trackNo >= 0 ? state.trackRvcModel[trackNo] : undefined;
     const trackLang = trackNo >= 0 ? state.trackLanguage[trackNo] : undefined;
     const trackMute = trackNo >= 0 ? state.trackMuteStrategy[trackNo] : undefined;
     return {
@@ -585,7 +631,6 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       activeInstrumentPartIndex: -1,
       activeWavePartIndex: -1,
       viewState: { ...state.viewState, scrollX },
-      ...(trackModel ? { rvcModel: trackModel } : {}),
       ...(trackLang ? { language: trackLang as any } : {}),
       ...(trackMute ? { muteStrategy: trackMute as any } : {}),
     };
@@ -839,14 +884,14 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       if (idx >= 0) trackNo = idx;
     }
     return {
-      rvcModel: model,
+      dirty: true,
       trackRvcModel: trackNo >= 0
         ? { ...state.trackRvcModel, [trackNo]: model }
         : state.trackRvcModel,
     };
   }),
   setTrackRvcModel: (trackIndex, model) => set((state) => ({
-    trackRvcModel: { ...state.trackRvcModel, [trackIndex]: model },
+    dirty: true, trackRvcModel: { ...state.trackRvcModel, [trackIndex]: model },
   })),
   setRvcSettings: (partial) => set((state) => ({
     rvcSettings: { ...state.rvcSettings, ...partial },
@@ -863,6 +908,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       if (idx >= 0) trackNo = idx;
     }
     return {
+      dirty: true,
       language: lang,
       trackLanguage: trackNo >= 0
         ? { ...state.trackLanguage, [trackNo]: lang }
@@ -870,13 +916,13 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     };
   }),
   setTrackLanguage: (trackIndex: number, lang: string) => set((state) => ({
-    trackLanguage: { ...state.trackLanguage, [trackIndex]: lang },
+    dirty: true, trackLanguage: { ...state.trackLanguage, [trackIndex]: lang },
   })),
   setTrackIndexRate: (trackIndex: number, rate: number) => set((state) => ({
-    trackIndexRate: { ...state.trackIndexRate, [trackIndex]: rate },
+    dirty: true, trackIndexRate: { ...state.trackIndexRate, [trackIndex]: rate },
   })),
   setTrackF0Offset: (trackIndex: number, offset: number) => set((state) => ({
-    trackF0Offset: { ...state.trackF0Offset, [trackIndex]: offset },
+    dirty: true, trackF0Offset: { ...state.trackF0Offset, [trackIndex]: offset },
   })),
   setMuteStrategy: (strategy) => set((state) => {
     const part = state.project.voice_parts[state.activePartIndex];
@@ -890,6 +936,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       if (idx >= 0) trackNo = idx;
     }
     return {
+      dirty: true,
       muteStrategy: strategy,
       trackMuteStrategy: trackNo >= 0
         ? { ...state.trackMuteStrategy, [trackNo]: strategy }
@@ -897,7 +944,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     };
   }),
   setTrackMuteStrategy: (trackIndex, strategy) => set((state) => ({
-    trackMuteStrategy: { ...state.trackMuteStrategy, [trackIndex]: strategy },
+    dirty: true, trackMuteStrategy: { ...state.trackMuteStrategy, [trackIndex]: strategy },
   })),
   setGlobalF0Offset: (offset) => set({ globalF0Offset: offset }),
   togglePitchSnap: () => set((s) => ({ pitchSnap: !s.pitchSnap })),
@@ -906,13 +953,34 @@ export const useSynthStore = create<SynthState>((set, get) => ({
     s.project.tracks.forEach((t, i) => {
       if (t.track_type === 'vocal') newTrack[i] = enabled;
     });
-    return { affineTransform: enabled, trackAffineTransform: newTrack };
+    return { affineTransform: enabled, trackAffineTransform: newTrack, dirty: true };
   }),
   setTrackAffineTransform: (trackIndex, enabled) => set((s) => {
     const next = { ...s.trackAffineTransform, [trackIndex]: enabled };
     const allOn = s.project.tracks.every((t, i) =>
       t.track_type !== 'vocal' || next[i] !== false);
-    return { trackAffineTransform: next, affineTransform: enabled ? allOn : false };
+    return { trackAffineTransform: next, affineTransform: enabled ? allOn : false, dirty: true };
+  }),
+  setCosineIndex: (enabled) => set({ cosineIndex: enabled, dirty: true }),
+  setModelF0: (enabled) => set((s) => {
+    const newTrack: Record<number, boolean> = {};
+    s.project.tracks.forEach((t, i) => {
+      if (t.track_type === 'vocal') newTrack[i] = enabled;
+    });
+    return { modelF0: enabled, trackModelF0: newTrack, dirty: true };
+  }),
+  setTrackModelF0: (trackIndex, enabled) => set((s) => {
+    const next = { ...s.trackModelF0, [trackIndex]: enabled };
+    const allOn = s.project.tracks.every((t, i) =>
+      t.track_type !== 'vocal' || next[i] !== false);
+    return { trackModelF0: next, modelF0: enabled ? allOn : false, dirty: true };
+  }),
+  toggleGhostTrack: (trackIndex) => set((s) => {
+    const cur = s.ghostTracks;
+    const next = cur.includes(trackIndex)
+      ? cur.filter(i => i !== trackIndex)
+      : [...cur, trackIndex];
+    return { ghostTracks: next };
   }),
   rvcModelListVersion: 0,
   bumpRvcModelList: () => set((s) => ({ rvcModelListVersion: s.rvcModelListVersion + 1 })),
@@ -1257,8 +1325,12 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   }),
 }));
 
-// Sync synth language when UI language changes
+// Sync synth language when UI language changes — only update global default,
+// never overwrite per-track languages (those are explicitly set by user or auto-detected)
 i18n.on('languageChanged', (lng: string) => {
-  const lang = lng.substring(0, 2);
-  useSynthStore.setState({ language: lang === 'zh' ? 'zh' : 'ja' });
+  const lang = lng.substring(0, 2) === 'zh' ? 'zh' as const : 'ja' as const;
+  const s = useSynthStore.getState();
+  if (Object.keys(s.trackLanguage).length === 0) {
+    useSynthStore.setState({ language: lang });
+  }
 });

@@ -13,11 +13,16 @@ import G2pTool from './G2pTool';
 function LanguageSelector() {
   const { t } = useTranslation();
   const language = useSynthStore(s => s.language);
+  const trackLanguage = useSynthStore(s => s.trackLanguage);
+  const activePartIndex = useSynthStore(s => s.activePartIndex);
+  const project = useSynthStore(s => s.project);
   const setLanguage = useSynthStore(s => s.setLanguage);
+  const activeTrackNo = project.voice_parts[activePartIndex]?.track_no ?? -1;
+  const displayLang = activeTrackNo >= 0 ? (trackLanguage[activeTrackNo] || language) : language;
   return (
     <div className="utai-synth-section">
       <div className="utai-synth-section__title">{t('synth.language', 'Language')}</div>
-      <select value={language} onChange={e => setLanguage(e.target.value as 'zh' | 'ja')}>
+      <select value={displayLang} onChange={e => setLanguage(e.target.value as 'zh' | 'ja')}>
         <option value="zh">中文 Chinese</option>
         <option value="ja">日本語 Japanese</option>
       </select>
@@ -27,18 +32,22 @@ function LanguageSelector() {
 
 function PitchShiftControl() {
   const { t } = useTranslation();
-  const settings = useSynthStore(s => s.rvcSettings);
-  const setRvcSettings = useSynthStore(s => s.setRvcSettings);
+  const activePartIndex = useSynthStore(s => s.activePartIndex);
+  const project = useSynthStore(s => s.project);
+  const trackF0Offset = useSynthStore(s => s.trackF0Offset);
+  const setTrackF0Offset = useSynthStore(s => s.setTrackF0Offset);
+  const activeTrackNo = project.voice_parts[activePartIndex]?.track_no ?? -1;
+  const f0Off = trackF0Offset[activeTrackNo] ?? 0;
   return (
     <div className="utai-synth-section">
       <div className="utai-synth-slider">
         <div className="utai-synth-slider__label">
-          {t('synth.pitchShift', 'Pitch')} <span>{settings.f0_up_key > 0 ? '+' : ''}{settings.f0_up_key}</span>
+          {t('synth.pitchShift', 'Pitch')} <span>{f0Off > 0 ? '+' : ''}{f0Off}</span>
         </div>
         <input
-          type="range" min={-12} max={12} step={1}
-          value={settings.f0_up_key}
-          onChange={e => setRvcSettings({ f0_up_key: Number(e.target.value) })}
+          type="range" min={-24} max={24} step={1}
+          value={f0Off}
+          onChange={e => activeTrackNo >= 0 && setTrackF0Offset(activeTrackNo, Number(e.target.value))}
         />
       </div>
     </div>
@@ -98,6 +107,50 @@ function AffineTransformToggle() {
       {enabled && (
         <div style={{ fontSize: 8, color: '#5a5a7a', marginTop: 2, fontFamily: 'var(--font-pixel)' }}>
           {t('synth.affineHint')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CosineIndexToggle() {
+  const { t } = useTranslation();
+  const enabled = useSynthStore(s => s.cosineIndex);
+  const setEnabled = useSynthStore(s => s.setCosineIndex);
+  return (
+    <div className="utai-synth-section" style={{ padding: '4px 10px' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-pixel)' }}>
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}
+          style={{ accentColor: 'var(--accent-purple)' }} />
+        <span style={{ color: enabled ? 'var(--accent-purple)' : '#8a8ab0' }}>
+          {t('synth.cosineIndex', 'Cosine Index')}
+        </span>
+      </label>
+      {enabled && (
+        <div style={{ fontSize: 8, color: '#5a5a7a', marginTop: 2, fontFamily: 'var(--font-pixel)' }}>
+          {t('synth.cosineIndexHint', 'L2-normalized retrieval — improved timbre accuracy')}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ModelF0Toggle() {
+  const { t } = useTranslation();
+  const enabled = useSynthStore(s => s.modelF0);
+  const setEnabled = useSynthStore(s => s.setModelF0);
+  return (
+    <div className="utai-synth-section" style={{ padding: '4px 10px' }}>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 11, fontFamily: 'var(--font-pixel)' }}>
+        <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)}
+          style={{ accentColor: 'var(--accent-purple)' }} />
+        <span style={{ color: enabled ? 'var(--accent-purple)' : '#8a8ab0' }}>
+          {t('synth.modelF0', 'Model F0')}
+        </span>
+      </label>
+      {enabled && (
+        <div style={{ fontSize: 8, color: '#5a5a7a', marginTop: 2, fontFamily: 'var(--font-pixel)' }}>
+          {t('synth.modelF0Hint', 'Model predicts pitch — pitch curves hidden')}
         </div>
       )}
     </div>
@@ -186,6 +239,84 @@ function VocalTrackInspector() {
           {t('synth.rangeExtend', 'Range Extend')}
         </span>
       </label>
+      <PerTrackModelF0 idx={idx} />
+    </div>
+  );
+}
+
+function PerTrackModelF0({ idx }: { idx: number }) {
+  const { t } = useTranslation();
+  const globalVal = useSynthStore(s => s.modelF0);
+  const trackVal = useSynthStore(s => s.trackModelF0);
+  const setTrack = useSynthStore(s => s.setTrackModelF0);
+  const checked = trackVal[idx] ?? globalVal;
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
+      <input type="checkbox" checked={checked}
+        onChange={e => setTrack(idx, e.target.checked)}
+        style={{ accentColor: '#9b6dff' }} />
+      <span style={{ fontSize: 9, fontFamily: 'var(--font-pixel)', color: checked ? '#9b6dff' : 'var(--text-dim)' }}>
+        {t('synth.modelF0', 'Model F0')}
+      </span>
+    </label>
+  );
+}
+
+const GHOST_COLORS = ['#ff6b9d', '#5ce0d8', '#e8b84b', '#9b6dff', '#5dba5d', '#e8944b'];
+
+function GhostTrackSelector() {
+  const { t } = useTranslation();
+  const project = useSynthStore(s => s.project);
+  const ghostTracks = useSynthStore(s => s.ghostTracks);
+  const toggleGhostTrack = useSynthStore(s => s.toggleGhostTrack);
+  const activePartIndex = useSynthStore(s => s.activePartIndex);
+  const activeInstPartIndex = useSynthStore(s => s.activeInstrumentPartIndex);
+
+  const activeTrackNo = activeInstPartIndex >= 0
+    ? (project.instrument_parts[activeInstPartIndex]?.track_no ?? -1)
+    : (project.voice_parts[activePartIndex]?.track_no ?? -1);
+
+  const noteTracks = project.tracks
+    .map((tr, i) => ({ tr, i }))
+    .filter(({ tr, i }) =>
+      (tr.track_type === 'vocal' || tr.track_type === 'instrument') && i !== activeTrackNo
+    );
+
+  if (noteTracks.length === 0) return null;
+
+  return (
+    <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border-dim)' }}>
+      <div style={{ fontFamily: 'var(--font-pixel)', fontSize: 10, color: '#7a7a9a', marginBottom: 4 }}>
+        {t('synth.ghostTracks', 'Reference Tracks')}
+      </div>
+      {noteTracks.map(({ tr, i }) => {
+        const on = ghostTracks.includes(i);
+        const c = GHOST_COLORS[i % GHOST_COLORS.length];
+        return (
+          <label key={i} style={{
+            display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer',
+            padding: '2px 0', fontSize: 10, fontFamily: 'var(--font-pixel)',
+          }}>
+            <div
+              onClick={() => toggleGhostTrack(i)}
+              style={{
+                width: 10, height: 10, borderRadius: 2, flexShrink: 0,
+                border: `1px solid ${on ? c : '#3a3a5a'}`,
+                background: on ? c : 'transparent',
+                opacity: on ? 0.7 : 1,
+                cursor: 'pointer',
+              }}
+            />
+            <span style={{ color: on ? c : '#6a6a8a', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              onClick={() => toggleGhostTrack(i)}>
+              {tr.track_name}
+            </span>
+            <span style={{ fontSize: 7, color: '#4a4a6a' }}>
+              {tr.track_type === 'vocal' ? 'V' : 'I'}
+            </span>
+          </label>
+        );
+      })}
     </div>
   );
 }
@@ -247,6 +378,8 @@ export default function ControlPanel() {
       {isArrangement && <RenderButton renderAll />}
       {isArrangement && <GlobalPitchOffset />}
       {isArrangement && <AffineTransformToggle />}
+      {isArrangement && <CosineIndexToggle />}
+      {isArrangement && <ModelF0Toggle />}
 
       <ProjectInfo />
 
@@ -266,6 +399,8 @@ export default function ControlPanel() {
               <PitchShiftControl />
               <MuteStrategySelector />
               <AffineTransformToggle />
+              <CosineIndexToggle />
+              <ModelF0Toggle />
             </>
           )}
 
@@ -274,6 +409,10 @@ export default function ControlPanel() {
           )}
 
           {activeTrackType === 'audio' && null /* effects only, shown below */}
+
+          {(activeTrackType === 'vocal' || activeTrackType === 'instrument') && (
+            <GhostTrackSelector />
+          )}
 
           <TrackEffectsPanel />
         </>

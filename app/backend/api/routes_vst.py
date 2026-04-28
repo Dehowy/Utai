@@ -63,6 +63,38 @@ async def import_plugin(req: ImportRequest):
         raise HTTPException(500, str(e))
 
 
+class PreviewRequest(BaseModel):
+    plugin_name: str
+    tone: int = 60
+    velocity: int = 100
+    duration: float = 0.5
+
+
+@router.post("/preview")
+async def preview_note(req: PreviewRequest):
+    """Render a single short note for preview — fast turnaround, normalized."""
+    try:
+        wav_path = vst_wrapper.render_midi(
+            name=req.plugin_name,
+            notes=[{"tone": req.tone, "velocity": req.velocity, "start": 0.0, "duration": req.duration}],
+            duration_sec=req.duration + 0.5,
+            sample_rate=44100,
+        )
+        import numpy as np
+        import soundfile as sf
+        data, sr = sf.read(wav_path)
+        peak = np.abs(data).max()
+        if peak > 1e-4:
+            data = data * min(0.8 / peak, 10.0)
+            sf.write(wav_path, data, sr)
+        return FileResponse(wav_path, media_type="audio/wav")
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e))
+    except Exception as e:
+        logger.exception("VST preview error")
+        raise HTTPException(500, str(e))
+
+
 @router.delete("/{name}")
 async def delete_plugin(name: str):
     """Delete an imported plugin."""

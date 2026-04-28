@@ -1,0 +1,92 @@
+# Score2HuBERT v2 training config — Run 9: ACE-SOFA + consist-fix + sustained-removed + pitch[SP]=0 in data
+#
+# Motivation (from Run 8 eval + listening):
+#   - ZH consonant regression: frame-consistency (0.02) + sustained weight (1.5x) smooth attacks
+#   - SP "left-right brain conflict": consist loss at voice<->rest prevents sharp transitions
+#   - ACE labeling inconsistencies: multiple annotator styles; unify with SOFA-Mandarin
+#   - Pitch tensor SP leakage: MIDI carries into SP frames (fixed inference-side but data bug remains)
+#
+# Changes vs Run 8:
+#   - DATA: ACE SOFA-Mandarin realigned (qiuqiao v1.0.0_mandarin_singing + opencpop-extension dict)
+#   - DATA: all datasets pitch[phonemes==SP]=0 fixed at source (not just inference)
+#   - LOSS: hubert_consist 0.02 -> 0.005 (4x reduction); add hubert_consist_min_dur=5 frames
+#           (phonemes <5 frames / <100ms are consonants — exempt from consist smoothing)
+#   - LOSS: sustained-region 1.5x weight REMOVED (trainer code change, all frames equal)
+#   - DATA: JA data unchanged (SOFA Greenleaf realign kept; pyworld pitch-shift aug x3 kept)
+#   - TRAINING: 75K steps from scratch (not warm-start from Run 8 — clean slate)
+#
+# Expected outcomes:
+#   - ZH consonant precision restored to Run 5 level or better
+#   - JA maintained; less over-smoothing may help attack clarity
+#   - SP rests cleaner (both data + model consistent)
+#   - Long notes still good (intra-note pos + skip + pos_aux handle without consist)
+
+# Model — SAME as Run 8 (54.63M params)
+model:
+  n_phones: 80
+  hidden_dim: 512
+  hubert_dim: 768
+  n_enc_layers: 5
+  n_heads: 8
+  enc_kernel: 31
+  n_det_blocks: 6
+  det_kernel: 7
+  dropout: 0.1
+
+# Data — ZH (ACE-SOFA Mandarin) + JA (5 single-singer SOFA-JA Greenleaf + pyworld aug x3)
+# NO UTAU. NO GTSINGER. NO EN. NO JVS in train (val only).
+data:
+  train_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+  val_dirs:
+    - data/processed/ace_opencpop
+    - data/processed/kiritan
+    - data/processed/itako
+    - data/processed/oniku
+    - data/processed/ofuton
+    - data/processed/natsume
+    # Run 9: JVS-MuSiC removed even from val. 100-singer blended centroids produce noisy metrics
+    # (ZH-JA min_cos dominated by ace-jvs pair artifact), and prior Run 5/8 showed no generalization
+    # value — model can't learn from it as signal.
+  max_frames: 500
+  num_workers: 8
+  persistent_workers: true
+  entry_filters:
+    singing_only: true
+  lang_weights:
+    zh: 1.0
+    ja: 3.0  # maintained from Run 8: batch 22% JA / 78% ZH
+
+# Training — SAME schedule as Run 8
+training:
+  batch_size: 112
+  lr: 2.0e-4
+  weight_decay: 0.01
+  warmup_steps: 1500
+  max_steps: 75000
+  val_interval: 2500
+  save_interval: 5000
+  log_interval: 50
+  fp16: true
+  grad_clip: 1.0
+  seed: 42
+
+# Loss weights — Run 9 consist reduction + min_dur exempt
+loss:
+  hubert_l1: 1.0
+  hubert_cos: 0.5
+  f0_l1: 1.0
+  voicing_bce: 0.05
+  hubert_consist: 0.005            # Run 9: 0.02 -> 0.005 (4x reduced — was over-smoothing consonants)
+  hubert_consist_min_dur: 5        # Run 9 NEW: phonemes <5 frames exempt from consist (consonants preserved)
+  pos_aux: 0.05
+
+# Checkpoint
+checkpoint:
+  dir: checkpoints
+  keep_last: 15

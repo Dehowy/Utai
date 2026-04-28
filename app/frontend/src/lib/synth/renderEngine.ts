@@ -3,13 +3,30 @@ import { RESOLUTION } from '../../types/ustx';
 import { renderVST, applyEffectsUpload } from '../../api/client';
 import * as engine from './audioEngine';
 
+let _globalAbort: AbortController | null = null;
+
+export function abortRender() {
+  _globalAbort?.abort();
+  _globalAbort = null;
+  fetch('/api/synth/stop', { method: 'POST' }).catch(() => {});
+  useSynthStore.getState().setRenderStatus('idle');
+  useSynthStore.getState().setRenderError('');
+}
+
+export function createRenderAbort(): AbortController {
+  _globalAbort?.abort();
+  const ac = new AbortController();
+  _globalAbort = ac;
+  return ac;
+}
+
 export function getTrackFingerprint(trackIdx: number): string {
   const s = useSynthStore.getState();
   const track = s.project.tracks[trackIdx];
   if (!track) return '';
   if (track.track_type === 'vocal') {
     const parts = s.project.voice_parts.filter(vp => vp.track_no === trackIdx);
-    const rvcModel = s.trackRvcModel[trackIdx] || s.rvcModel;
+    const rvcModel = s.trackRvcModel[trackIdx] || '';
     const lang = s.trackLanguage[trackIdx] || s.language;
     const idxRate = s.trackIndexRate[trackIdx] ?? s.rvcSettings.index_rate;
     const f0Off = (s.trackF0Offset[trackIdx] ?? 0) + (s.globalF0Offset || 0);
@@ -17,7 +34,7 @@ export function getTrackFingerprint(trackIdx: number): string {
     const affine = s.trackAffineTransform[trackIdx] ?? s.affineTransform;
     return JSON.stringify({
       p: parts.map(p => ({ pos: p.position, n: p.notes })),
-      rvc: rvcModel, f0: s.rvcSettings.f0_up_key, gf0: f0Off, idx: idxRate,
+      rvc: rvcModel, gf0: f0Off, idx: idxRate,
       lang, mute: muteStrat, affine,
     });
   }
@@ -42,7 +59,6 @@ export function trackNeedsRender(trackIdx: number): boolean {
   } else if (track.track_type === 'instrument') {
     const hasNotes = s.project.instrument_parts.some(ip => ip.track_no === trackIdx && ip.notes.length > 0);
     if (!hasNotes) return false;
-    if (!track.plugin_name) return false;
   }
 
   return getTrackFingerprint(trackIdx) !== (s.trackRenderedSnapshot[trackIdx] ?? '');
@@ -91,10 +107,11 @@ export async function renderSingleTrack(
     );
 
     if (allNotes.length === 0) return true;
-    const rvcModel = s.trackRvcModel[trackIdx] || s.rvcModel;
+    const rvcModel = s.trackRvcModel[trackIdx] || '';
     if (!rvcModel) return false;
 
     const affine = s.trackAffineTransform[trackIdx] ?? s.affineTransform;
+    const useModelF0 = s.trackModelF0[trackIdx] ?? s.modelF0;
 
     const form = new FormData();
     form.append('notes', JSON.stringify(allNotes));
@@ -104,7 +121,9 @@ export async function renderSingleTrack(
     form.append('f0_up_key', String((s.trackF0Offset[trackIdx] ?? 0) + (s.globalF0Offset || 0)));
     form.append('index_rate', String(s.trackIndexRate[trackIdx] ?? s.rvcSettings.index_rate));
     form.append('mute_strategy', s.trackMuteStrategy[trackIdx] || s.muteStrategy);
-    if (affine) form.append('affine_transform', 'true');
+    form.append('affine_transform', affine ? 'true' : 'false');
+    form.append('cosine_index', s.cosineIndex ? 'true' : 'false');
+    form.append('model_f0', useModelF0 ? 'true' : 'false');
 
     const res = await fetch('/api/synth/s2h/render', { method: 'POST', body: form, signal });
     if (!res.ok) {
@@ -118,75 +137,54 @@ export async function renderSingleTrack(
 
     const rawUrl = URL.createObjectURL(rawBlob);
     useSynthStore.getState().setTrackRawAudioUrl(trackIdx, rawUrl);
-
-    // Apply track effects if any are enabled
-    const finalUrl = await applyVocalTrackEffects(trackIdx, rawBlob);
-
-    useSynthStore.getState().setTrackAudioUrl(trackIdx, finalUrl || rawUrl);
-    useSynthStore.getState().setFinalUrl(useSynthStore.getState().trackAudioUrls[trackIdx]);
+    useSynthStore.getState().setTrackAudioUrl(trackIdx, rawUrl);
+    useSynthStore.getState().setFinalUrl(rawUrl);
 
   } else if (track.track_type === 'instrument') {
     const trackParts = s.project.instrument_parts.filter(ip => ip.track_no === trackIdx);
-    for (const ip of trackParts) {
-      if (!track.plugin_name || ip.notes.length === 0) continue;
-      const notes = ip.notes.map(n => ({
+    if (!track.plugin_name) return false;
+    const firstPartPos = trackParts.length > 0
+      ? Math.min(...trackParts.map(ip => ip.position)) : 0;
+    const offsetSec = engine.ticksToSeconds(firstPartPos, s.project.tempos);
+    const allNotes = trackParts.flatMap(ip =>
+      ip.notes.map(n => ({
         tone: n.tone,
         velocity: n.velocity,
-        start: engine.ticksToSeconds(ip.position + n.position, s.project.tempos),
+        start: engine.ticksToSeconds(ip.position + n.position, s.project.tempos) - offsetSec,
         duration: engine.ticksToSeconds(n.duration, [{ position: 0, bpm }]),
-      }));
-      const blob = await renderVST({ plugin_name: track.plugin_name, notes, bpm });
-      const prevUrl = useSynthStore.getState().trackAudioUrls[trackIdx];
-      if (prevUrl) URL.revokeObjectURL(prevUrl);
-      useSynthStore.getState().setTrackAudioUrl(trackIdx, URL.createObjectURL(blob));
-    }
+      }))
+    );
+    if (allNotes.length === 0) return true;
+    const blob = await renderVST({ plugin_name: track.plugin_name, notes: allNotes, bpm });
+    const rawUrl = URL.createObjectURL(blob);
+    useSynthStore.getState().setTrackRawAudioUrl(trackIdx, rawUrl);
+    useSynthStore.getState().setTrackAudioUrl(trackIdx, rawUrl);
   } else {
     return true;
   }
 
-  // Apply track effects
-  const latestUrl = useSynthStore.getState().trackAudioUrls[trackIdx];
-  const effects = s.trackEffects[trackIdx];
-  if (effects && effects.length > 0 && latestUrl) {
-    const renderFx = effects.filter(e => e.enabled && e.type in {
-      world_pitch: 1, warp_pitch: 1, compressor: 1, reverb: 1, filter: 1, delay: 1, panner: 1,
-    });
-    if (renderFx.length > 0) {
-      try {
-        const audioBlob = await fetch(latestUrl).then(r => r.blob());
-        const processed = await applyEffectsUpload(audioBlob, renderFx);
-        const prevUrl2 = useSynthStore.getState().trackAudioUrls[trackIdx];
-        if (prevUrl2) URL.revokeObjectURL(prevUrl2);
-        const fxUrl = URL.createObjectURL(processed);
+  // Apply effects to the just-rendered raw audio
+  const s2 = useSynthStore.getState();
+  const effects = (s2.trackEffects[trackIdx] || [])
+    .filter(fx => fx.enabled)
+    .map(fx => ({ type: fx.type, params: fx.params, enabled: true }));
+  if (effects.length > 0) {
+    try {
+      const rawUrl = s2.trackRawAudioUrls[trackIdx];
+      if (rawUrl) {
+        const rawBlob2 = await fetch(rawUrl).then(r => r.blob());
+        const fxBlob = await applyEffectsUpload(rawBlob2, effects);
+        const fxUrl = URL.createObjectURL(fxBlob);
         useSynthStore.getState().setTrackAudioUrl(trackIdx, fxUrl);
         if (track.track_type === 'vocal') useSynthStore.getState().setFinalUrl(fxUrl);
-      } catch (err: any) {
-        console.error(`Track ${trackIdx} effects failed:`, err);
       }
+    } catch (err: any) {
+      console.error(`Track ${trackIdx} effects failed:`, err);
     }
   }
 
-  // Save fingerprint so we know this track is up-to-date
   useSynthStore.getState().setTrackRenderedSnapshot(trackIdx, getTrackFingerprint(trackIdx));
   return true;
-}
-
-async function applyVocalTrackEffects(
-  trackIdx: number, rawBlob: Blob,
-): Promise<string | null> {
-  const s = useSynthStore.getState();
-  const effects = (s.trackEffects[trackIdx] || [])
-    .filter(fx => fx.enabled)
-    .map(fx => ({ type: fx.type, params: fx.params, enabled: true }));
-  if (effects.length === 0) return null;
-
-  try {
-    const processedBlob = await applyEffectsUpload(rawBlob, effects);
-    return URL.createObjectURL(processedBlob);
-  } catch (err: any) {
-    console.error(`Vocal track ${trackIdx} effects failed:`, err);
-    return null;
-  }
 }
 
 export async function renderTracks(

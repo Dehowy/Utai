@@ -1,0 +1,49 @@
+{
+  "name": "utai-installer",
+  "version": "1.7.0",
+  "description": "Utai Installer",
+  "main": "main.js",
+  "scripts": {
+    "postinstall": "node -e \"const fs=require('fs');const s='patches/portable.nsi';const d='node_modules/app-builder-lib/templates/nsis/portable.nsi';if(fs.existsSync(s)){fs.copyFileSync(s,d);console.log('  portable.nsi patched')}\"",
+    "start": "electron .",
+    "build": "electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-packager": "^17.1.2"
+  },
+  "build": {
+    "appId": "com.utai.installer",
+    "productName": "Utai Installer",
+    "win": {
+      "target": "portable",
+      "icon": "icon.ico",
+      "sign": false,
+      "signDlls": false
+    },
+    "portable": {
+      "artifactName": "Utai_Installer.${ext}",
+      "splashImage": "splash.bmp"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "installer.css",
+      "installer.js",
+      "icon.ico",
+      "icon.png",
+      "VT323-Regular.ttf",
+      "DotGothic16-Regular.ttf"
+    ],
+    "extraResources": [
+      {
+        "from": "bundle",
+        "to": "bundle"
+      }
+    ],
+    "compression": "normal",
+    "npmRebuild": false
+  }
+}

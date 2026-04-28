@@ -143,32 +143,34 @@ class RVCWrapper:
         self._ensure_init()
 
         if progress_callback:
-            await progress_callback(0.2, "Preparing audio for RVC...")
+            dur_s = audio.shape[-1] / sr if audio.ndim == 1 else audio.shape[-1] / sr
+            await progress_callback(0.1, f"Input: {dur_s:.1f}s @ {sr}Hz")
 
         # Write audio to temp file (RVC requires file path input)
         import soundfile as sf
         import uuid as _uuid
         temp_wav = os.path.join(str(TEMP_DIR), f"rvc_input_{_uuid.uuid4().hex[:12]}.wav")
-        # Audio should be (samples, channels) for sf.write
         if audio.ndim == 2 and audio.shape[0] < audio.shape[1]:
-            # Shape is (channels, samples) — need to transpose
             audio_write = audio.T
         elif audio.ndim == 2 and audio.shape[0] > audio.shape[1]:
-            # Shape is (samples, channels) — already correct
             audio_write = audio
         else:
             audio_write = audio
         sf.write(temp_wav, audio_write, sr)
 
         if progress_callback:
-            await progress_callback(0.3, "Loading RVC model...")
+            await progress_callback(0.2, f"Loading model: {model_name}")
 
+        index_file = params.get("index_file", "")
         with _rvc_context(self._rvc_root):
-            # Load model
             self._vc.get_vc(f"{model_name}.pth")
 
             if progress_callback:
-                await progress_callback(0.5, "Converting voice...")
+                index_msg = f"Index: {Path(index_file).name}" if index_file and os.path.exists(index_file) else "Index: not used"
+                await progress_callback(0.3, f"Model loaded (sr={self._vc.tgt_sr}, v={self._vc.version}). {index_msg}")
+                f0_method = params.get("f0_method", "rmvpe")
+                f0_key = int(params.get("f0_up_key", 0))
+                await progress_callback(0.4, f"Converting: f0={f0_method}, pitch={f0_key:+d}st")
 
             # Run conversion in thread pool to not block event loop
             def _do_convert():
@@ -196,7 +198,14 @@ class RVCWrapper:
         except OSError:
             pass
 
+        if out_audio is None:
+            logger.error(f"RVC conversion failed: {info}")
+            raise RuntimeError(f"RVC conversion failed: {info}")
+
         logger.info(f"RVC info: {info}")
+
+        if progress_callback:
+            await progress_callback(0.9, f"Done: {out_audio.shape[0]/out_sr:.1f}s @ {out_sr}Hz")
 
         # Normalize output
         if out_audio.dtype == np.int16:

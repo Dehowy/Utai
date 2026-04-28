@@ -1,0 +1,218 @@
+# Score2HuBERT - Base Configuration
+# All paths relative to project root unless absolute
+
+# ============================================================
+# Model Architecture
+# ============================================================
+model:
+  # Encoder (Conformer)
+  encoder:
+    d_model: 512
+    n_layers: 6
+    n_heads: 8
+    d_ff: 2048
+    conv_kernel_size: 31
+    dropout: 0.1
+    phoneme_vocab_size: 512  # accommodates ja + zh + en + special tokens
+    max_pitch: 128           # MIDI range 0-127
+    pitch_embed_dim: 256
+    use_relative_pos: true
+
+  # Length regulator
+  length_regulator:
+    type: "expand"  # "expand" (given durations) or "predict" (learned)
+
+  # Variance adaptor
+  variance:
+    energy:
+      enabled: true
+      n_layers: 3
+      kernel_size: 3
+      hidden_dim: 256
+    breathiness:
+      enabled: true
+      n_layers: 3
+      kernel_size: 3
+      hidden_dim: 256
+    voicing:
+      enabled: true
+      n_layers: 2
+      kernel_size: 3
+      hidden_dim: 256
+
+  # F0 predictor
+  f0_predictor:
+    hidden_dim: 384
+    conv_layers: 5
+    conv_kernel: 5
+    lstm_layers: 2
+    dropout: 0.1
+    # singing_ratio controls: 1.0=singing (predict deviation), 0.0=rap (predict absolute)
+
+  # Flow matching decoder (OT-CFM)
+  flow_matching:
+    d_hubert: 768           # HuBERT feature dimension (must match RVC)
+    n_layers: 6
+    n_heads: 8
+    d_ff: 2048
+    d_cond: 512             # condition dimension (from encoder)
+    dropout: 0.1
+    sigma_min: 1.0e-4       # minimum noise level
+    ot_ode: true            # use optimal transport conditional flow matching
+    # Classifier-free guidance
+    cfg:
+      enabled: true
+      drop_prob: 0.15       # probability of dropping condition during training
+      guidance_scale: 2.0   # inference guidance strength (w)
+
+  # Duration predictor (optional, for when durations aren't given)
+  duration_predictor:
+    enabled: false
+    hidden_dim: 256
+    n_layers: 3
+    kernel_size: 3
+    dropout: 0.1
+
+# ============================================================
+# Audio / Feature Extraction
+# ============================================================
+audio:
+  sample_rate: 16000       # HuBERT input SR
+  hop_length: 160          # 10ms @ 16kHz → 100fps (match RVC)
+  win_length: 400          # 25ms window
+  n_fft: 512
+  target_sr: 44100         # original audio SR for loading
+
+hubert:
+  model_path: null         # set to RVC's hubert_base.pt path, or auto-detect
+  layer: 12                # Layer 12 for RVC v2
+  feature_dim: 768
+  frame_rate: 50           # HuBERT-Base actual: 16kHz / 320 hop stride = 50fps
+
+f0:
+  method: "rmvpe"          # rmvpe | harvest | crepe | parselmouth
+  f0_min: 50.0
+  f0_max: 1100.0
+  frame_rate: 50           # downsampled from RMVPE 100fps to match HuBERT
+  # RVC F0 quantization
+  f0_bins: 256             # 1-255 valid range
+  voiced_threshold: 0.03   # for RMVPE
+
+# ============================================================
+# RVC Compensation
+# ============================================================
+rvc_compensation:
+  enabled: true
+  alpha: 0.35              # compensation strength (0=none, 1=full)
+  rvc_model: null          # path to RVC .pth for compensation analysis
+  rvc_index: null          # path to FAISS index (optional)
+  # Will compute: target = H_gt + alpha * (H_gt - H_roundtrip)
+  cache_dir: "data/processed/rvc_compensation"
+
+# ============================================================
+# Data
+# ============================================================
+data:
+  processed_dir: "data/processed"
+  # Phoneme vocabulary
+  phoneme:
+    vocab_file: "configs/phoneme_vocab.yaml"
+    languages: ["ja", "zh"]
+    special_tokens: ["<pad>", "<sos>", "<eos>", "SP", "AP", "br"]
+  # Data split
+  val_ratio: 0.05
+  test_ratio: 0.05
+  # Augmentation
+  augmentation:
+    pitch_shift:
+      enabled: true
+      range_semitones: [-12, 12]
+      prob: 0.5
+    time_stretch:
+      enabled: true
+      range: [0.9, 1.1]
+      prob: 0.3
+    noise:
+      enabled: false
+      snr_range: [20, 40]
+      prob: 0.1
+  # Batching
+  max_frames: 1200         # max frames per sample (12 seconds @ 100fps)
+  min_frames: 30           # min frames per sample
+
+# ============================================================
+# Training
+# ============================================================
+training:
+  # Optimizer
+  optimizer:
+    type: "adamw"
+    lr: 2.0e-4
+    betas: [0.9, 0.98]
+    weight_decay: 0.01
+    eps: 1.0e-8
+  # Scheduler
+  scheduler:
+    type: "warmup_cosine"
+    warmup_steps: 4000
+    min_lr: 1.0e-6
+    total_steps: 200000
+  # Batch
+  batch_size: 16
+  accumulate_grad: 1
+  num_workers: 4
+  # Training loop
+  max_steps: 200000
+  val_every: 2000
+  save_every: 5000
+  log_every: 100
+  # Loss weights
+  loss:
+    flow_matching: 1.0
+    f0: 1.0
+    duration: 0.5          # only if duration_predictor.enabled
+    energy: 0.1
+    breathiness: 0.1
+    voicing: 0.05
+    # Multi-scale HuBERT loss
+    multiscale_hubert:
+      enabled: true
+      scales: [1, 5, 10]   # frame averaging scales
+      weight: 0.3
+  # Regularization
+  grad_clip: 1.0
+  ema:
+    enabled: true
+    decay: 0.9999
+  # Mixed precision
+  fp16: true
+  # Checkpointing
+  save_top_k: 5
+  monitor: "val/total_loss"
+
+# ============================================================
+# Inference
+# ============================================================
+inference:
+  flow_steps: 10           # ODE solver steps
+  solver: "euler"          # euler | midpoint | rk4
+  cfg_scale: 2.0           # classifier-free guidance scale
+  temperature: 1.0
+  # Chunked generation for long sequences
+  chunk_frames: 500
+  overlap_frames: 50
+  # Post-processing
+  feature_clamp: [-10, 10] # clamp generated features
+
+# ============================================================
+# Paths (auto-resolved at runtime)
+# ============================================================
+paths:
+  project_root: "."
+  rvc_root: "RVC/RVC20240604Nvidia"
+  hubert_model: "RVC/RVC20240604Nvidia/assets/hubert/hubert_base.pt"
+  rmvpe_model: "RVC/RVC20240604Nvidia/assets/rmvpe/rmvpe.pt"
+  rvc_weights_dir: "RVC/RVC20240604Nvidia/assets/weights"
+  rvc_config_dir: "RVC/RVC20240604Nvidia/configs"
+  checkpoint_dir: "checkpoints"
+  log_dir: "logs"

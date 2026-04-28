@@ -50,8 +50,10 @@ async def download_media(
     python = sys.executable
     cmd = [python, "-m", "yt_dlp"]
 
-    # Output template
+    # Output template — sanitize filenames on Windows
     cmd += ["-o", os.path.join(output_dir, "%(title).80s.%(ext)s")]
+    if sys.platform == "win32":
+        cmd += ["--windows-filenames"]
 
     # Print JSON info for metadata
     cmd += ["--print-json"]
@@ -141,11 +143,12 @@ async def download_media(
 
     cmd.append(url)
 
-    # Environment with yt-dlp source path
+    # Environment — add yt-dlp source to PYTHONPATH only if it exists
     env = os.environ.copy()
-    ytdlp_parent = str(YTDLP_ROOT)
-    existing = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = f"{ytdlp_parent}{os.pathsep}{existing}" if existing else ytdlp_parent
+    if YTDLP_ROOT.exists():
+        ytdlp_parent = str(YTDLP_ROOT)
+        existing = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{ytdlp_parent}{os.pathsep}{existing}" if existing else ytdlp_parent
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUTF8"] = "1"
 
@@ -162,13 +165,21 @@ async def download_media(
     # Hide console windows on Windows
     kwargs: dict = {}
     if sys.platform == "win32":
+        import subprocess as _sp
+        si = _sp.STARTUPINFO()
+        si.dwFlags |= _sp.STARTF_USESHOWWINDOW
+        si.wShowWindow = 0
+        kwargs["startupinfo"] = si
         kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+
+    # Use yt-dlp source dir as cwd if it exists, otherwise fall back to output_dir
+    cwd = str(YTDLP_ROOT) if YTDLP_ROOT.exists() else output_dir
 
     process = await asyncio.create_subprocess_exec(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=str(YTDLP_ROOT),
+        cwd=cwd,
         env=env,
         **kwargs,
     )

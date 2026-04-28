@@ -14,12 +14,16 @@ interface Model {
 
 export default function RVCModelSelector() {
   const { t } = useTranslation();
-  const rvcModel = useSynthStore(s => s.rvcModel);
+  const trackRvcModel = useSynthStore(s => s.trackRvcModel);
+  const activePartIndex = useSynthStore(s => s.activePartIndex);
+  const project = useSynthStore(s => s.project);
   const setRvcModel = useSynthStore(s => s.setRvcModel);
   const listVersion = useSynthStore(s => s.rvcModelListVersion);
   const [models, setModels] = useState<Model[]>([]);
   const [detecting, setDetecting] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
+  const activeTrackNo = project.voice_parts[activePartIndex]?.track_no ?? -1;
+  const displayModel = activeTrackNo >= 0 ? (trackRvcModel[activeTrackNo] || '') : '';
 
   useEffect(() => {
     getRVCModels().then(data => {
@@ -35,7 +39,7 @@ export default function RVCModelSelector() {
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
   const handleDetectRange = async () => {
-    const selected = models.find(m => m.filename === rvcModel);
+    const selected = models.find(m => m.filename === displayModel);
     if (!selected) return;
     setDetecting(selected.name);
     try {
@@ -54,12 +58,12 @@ export default function RVCModelSelector() {
     } catch { setDetecting(null); }
   };
 
-  const selectedModel = models.find(m => m.filename === rvcModel);
+  const selectedModel = models.find(m => m.filename === displayModel);
 
   return (
     <div className="utai-synth-section">
       <div className="utai-synth-section__title">{t('synth.rvcModel')}</div>
-      <select value={rvcModel} onChange={e => setRvcModel(e.target.value)}>
+      <select value={displayModel} onChange={e => setRvcModel(e.target.value)}>
         <option value="">{t('synth.selectRvcModel')}</option>
         {models.map(m => (
           <option key={m.filename} value={m.filename}>
@@ -72,7 +76,7 @@ export default function RVCModelSelector() {
           Comfort: {selectedModel.range.comfort_label} | Usable: {selectedModel.range.range_label}
         </div>
       )}
-      {rvcModel && !selectedModel?.range && (
+      {displayModel && !selectedModel?.range && (
         <button
           onClick={handleDetectRange}
           disabled={!!detecting}
