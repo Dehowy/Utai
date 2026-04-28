@@ -196,6 +196,17 @@ export default function SynthProjectMenu() {
     setOpen(false);
     const s = useSynthStore.getState();
     try {
+      const isElectron = !!(window as any).electronAPI;
+      let savePath: string | null = null;
+      if (isElectron) {
+        savePath = await (window as any).electronAPI.saveFile({
+          title: 'Export Audio',
+          filters: [{ name: 'WAV Audio', extensions: ['wav'] }, { name: 'All Files', extensions: ['*'] }],
+          defaultPath: `${s.project.name || 'export'}.wav`,
+        });
+        if (!savePath) return;
+      }
+
       const form = new FormData();
       const trackBlobs: Record<number, { position_ticks: number; volume: number; pan: number }> = {};
 
@@ -229,6 +240,7 @@ export default function SynthProjectMenu() {
         format: 'wav',
         sample_rate: 44100,
         bit_depth: 24,
+        save_path: savePath,
       };
       form.append('project_json', JSON.stringify(projectMeta));
 

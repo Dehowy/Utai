@@ -778,15 +778,13 @@ async def export_mix(
     files: list[UploadFile] = File(default=[]),
 ):
     """Mix uploaded track blobs + audio-track buffers → stereo WAV download."""
-    import tkinter as tk
-    from tkinter import filedialog
-
     meta = json.loads(project_json)
     project = meta["project"]
     track_blobs = meta.get("trackBlobs", {})  # {trackIndex: {position_ticks, volume, pan}}
     target_sr = meta.get("sample_rate", 44100)
     fmt = meta.get("format", "wav")
     bit_depth = meta.get("bit_depth", 24)
+    save_path = meta.get("save_path")  # from Electron IPC dialog
 
     tracks = project.get("tracks", [])
     bpm = project.get("tempos", [{}])[0].get("bpm", 120)
@@ -898,20 +896,26 @@ async def export_mix(
 
     mixed_out = mixed.T  # (samples, 2)
 
-    # Save dialog
+    # Get save path: from frontend (Electron IPC) or fallback to tkinter (dev mode)
     fmt_ext = {"wav": ".wav", "mp3": ".mp3", "flac": ".flac", "ogg": ".ogg"}
     ext = fmt_ext.get(fmt, ".wav")
-
-    root = tk.Tk()
-    root.withdraw()
-    root.attributes("-topmost", True)
-    path = filedialog.asksaveasfilename(
-        title="Export Audio",
-        defaultextension=ext,
-        filetypes=[(f"{fmt.upper()} Audio", f"*{ext}"), ("All Files", "*.*")],
-        initialfile=f"{project.get('name', 'export')}{ext}",
-    )
-    root.destroy()
+    path = save_path
+    if not path:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.asksaveasfilename(
+                title="Export Audio",
+                defaultextension=ext,
+                filetypes=[(f"{fmt.upper()} Audio", f"*{ext}"), ("All Files", "*.*")],
+                initialfile=f"{project.get('name', 'export')}{ext}",
+            )
+            root.destroy()
+        except ImportError:
+            raise HTTPException(500, "No save path provided and tkinter not available")
     if not path:
         return {"cancelled": True}
 

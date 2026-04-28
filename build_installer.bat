@@ -75,12 +75,24 @@ if exist "MSST\inference\__init__.py" (
     echo   msst-patches synced (inference, modules, utils, configs, vr_modelparams)
 )
 
-:: Sync RVC patches — upstream audio.py needs subprocess fix for hidden terminal
+:: Sync RVC patches — upstream needs fixes for portable env:
+::   audio.py: ffmpeg subprocess → PyAV (no ffmpeg binary needed)
+::   process_ckpt.py: remove i18n import (i18n dir deleted in cleanup)
+::   train.py: argparse guard for mp.Process, USE_LIBUV, logger rebuild
+::   utils.py: matplotlib tostring_rgb → buffer_rgba
 if exist "RVC\RVC20240604Nvidia\infer\lib\audio.py" (
     rd /s /q "installer\bundle\rvc-patches" 2>nul
-    mkdir "installer\bundle\rvc-patches\infer\lib" 2>nul
+    mkdir "installer\bundle\rvc-patches\infer\lib\train" 2>nul
+    mkdir "installer\bundle\rvc-patches\infer\modules\train" 2>nul
+    mkdir "installer\bundle\rvc-patches\configs\v1" 2>nul
+    mkdir "installer\bundle\rvc-patches\configs\v2" 2>nul
     copy /y "RVC\RVC20240604Nvidia\infer\lib\audio.py" "installer\bundle\rvc-patches\infer\lib\audio.py" >nul
-    echo   rvc-patches synced (audio.py terminal fix)
+    copy /y "RVC\RVC20240604Nvidia\infer\lib\train\process_ckpt.py" "installer\bundle\rvc-patches\infer\lib\train\process_ckpt.py" >nul
+    copy /y "RVC\RVC20240604Nvidia\infer\lib\train\utils.py" "installer\bundle\rvc-patches\infer\lib\train\utils.py" >nul
+    copy /y "RVC\RVC20240604Nvidia\infer\modules\train\train.py" "installer\bundle\rvc-patches\infer\modules\train\train.py" >nul
+    xcopy /e /q /y "RVC\RVC20240604Nvidia\configs\v1\*" "installer\bundle\rvc-patches\configs\v1\" >nul
+    xcopy /e /q /y "RVC\RVC20240604Nvidia\configs\v2\*" "installer\bundle\rvc-patches\configs\v2\" >nul
+    echo   rvc-patches synced (audio, process_ckpt, train, utils, configs)
 )
 
 :: Sync VST host (needed for VST3 plugin editor — e.g. Dexed)

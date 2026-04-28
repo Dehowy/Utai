@@ -474,13 +474,36 @@ ipcMain.handle('start-install', (_, config) => {
           log('  [!] Voice conversion will not work without these models.');
         }
 
+        // ── 5a-2. Download pretrained_v2 models (gitignored in upstream repo) ──
+        stage(22, 'Downloading RVC pretrained models...');
+        const pretrainedDir = path.join(rvcAssets, 'pretrained_v2');
+        fs.mkdirSync(pretrainedDir, { recursive: true });
+        const pretrainedBase = `${hfBase}/lj1995/VoiceConversionWebUI/resolve/main/pretrained_v2`;
+        const pretrainedFiles = [
+          'f0G32k.pth', 'f0G40k.pth', 'f0G48k.pth',
+          'f0D32k.pth', 'f0D40k.pth', 'f0D48k.pth',
+          'G32k.pth', 'G40k.pth', 'G48k.pth',
+          'D32k.pth', 'D40k.pth', 'D48k.pth',
+        ];
+        try {
+          for (const pf of pretrainedFiles) {
+            const dest = path.join(pretrainedDir, pf);
+            if (fs.existsSync(dest)) { continue; }
+            await downloadFile(`${pretrainedBase}/${pf}`, dest, `pretrained_v2/${pf}`);
+          }
+          log('  Pretrained v2 models downloaded');
+        } catch (e) {
+          log(`  [!] Pretrained model download failed: ${e.message}`);
+          log('  [!] RVC training will not work without pretrained models.');
+        }
+
         // ── 5b. Apply RVC patches ──
         const rvcPatchSrc = path.join(bundlePath, 'rvc-patches');
         if (fs.existsSync(rvcPatchSrc)) {
           const rvcRoot = path.join(installPath, 'RVC', 'RVC20240604Nvidia');
           if (fs.existsSync(rvcRoot)) {
             cpRecursive(rvcPatchSrc, rvcRoot);
-            log('  RVC patches applied (audio.py terminal fix)');
+            log('  RVC patches applied (audio, process_ckpt, train, utils)');
           }
         }
 
@@ -688,11 +711,13 @@ ipcMain.handle('start-install', (_, config) => {
       log(`  Dependencies exit code: ${depCode}`);
       if (depCode !== 0) { fail(`Dependencies failed to install (pip exit code ${depCode})`); return; }
 
-      // ── 12b. Install fairseq (--no-deps to avoid omegaconf conflict) ──
+      // ── 12b. Install fairseq (--no-deps, from bundled wheel for reliability) ──
       stage(75, 'Installing fairseq...');
-      const fsArgs = ['-m', 'pip', 'install', '--no-warn-script-location', '--no-cache-dir',
-        '--no-deps', 'fairseq>=0.12.2', ...pipMirrorArgs];
-      log('  pip install fairseq --no-deps');
+      const fsWheel = path.join(bundlePath, 'wheels', 'fairseq-0.12.2-cp310-cp310-win_amd64.whl');
+      const fsArgs = fs.existsSync(fsWheel)
+        ? ['-m', 'pip', 'install', '--no-warn-script-location', '--no-deps', fsWheel]
+        : ['-m', 'pip', 'install', '--no-warn-script-location', '--no-deps', 'fairseq>=0.12.2', ...pipMirrorArgs];
+      log(`  pip install fairseq --no-deps ${fs.existsSync(fsWheel) ? '(bundled wheel)' : '(network)'}`);
       const fsProc = trackedSpawn(pythonExe, fsArgs, { cwd: installPath });
       fsProc.stdout.on('data', d => log('  ' + d.toString().trim()));
       fsProc.stderr.on('data', d => log('  [pip] ' + d.toString().trim()));
@@ -724,6 +749,18 @@ ipcMain.handle('start-install', (_, config) => {
           }
         }
       } catch (e) { log(`  [!] librosa patch skipped: ${e.message}`); }
+
+      // ── 13b. Install tensorboard stub (sitecustomize.py) ──
+      // RVC training imports torch.utils.tensorboard but the real package is too heavy.
+      // Our backend ships a no-op stub in app/backend/stubs/sitecustomize.py.
+      try {
+        const stubSrc = path.join(installPath, 'app', 'backend', 'stubs', 'sitecustomize.py');
+        const stubDst = path.join(sitePackages, 'sitecustomize.py');
+        if (fs.existsSync(stubSrc)) {
+          fs.copyFileSync(stubSrc, stubDst);
+          log('  tensorboard stub installed (sitecustomize.py)');
+        }
+      } catch (e) { log(`  [!] tensorboard stub skipped: ${e.message}`); }
 
       // ── 14. Save mirror config ──
       stage(88, 'Saving configuration...');

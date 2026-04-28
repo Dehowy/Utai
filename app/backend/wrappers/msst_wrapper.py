@@ -176,8 +176,9 @@ class MSSTWrapper:
                 exact = configs_dir / model_class / f"{name}.yaml"
                 if exact.exists():
                     return exact
-        for cfg in configs_dir.rglob(f"{model_stem}.yaml"):
-            return cfg
+        for pattern in [f"{model_stem}.yaml", f"{model_filename}.yaml"]:
+            for cfg in configs_dir.rglob(pattern):
+                return cfg
 
         # 2) Collect all candidates matching model_type, then pick by dim
         if not model_type:

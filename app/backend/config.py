@@ -39,7 +39,7 @@ WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Server
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8767"))
+PORT = int(os.getenv("PORT", "8765"))
 
 # Device
 DEVICE = os.getenv("DEVICE", "auto")  # "auto", "cuda", "cpu"
