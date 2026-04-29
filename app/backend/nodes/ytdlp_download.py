@@ -122,9 +122,24 @@ class YtdlpDownloadNode(BaseNode):
 
             if audio_path:
                 try:
-                    samples, sr = sf.read(audio_path, dtype="float32")
-                    # sf.read returns (num_samples,) for mono or (num_samples, channels) for stereo
-                    # Keep as-is — this is the standard format used throughout the app
+                    try:
+                        samples, sr = sf.read(audio_path, dtype="float32")
+                    except Exception:
+                        import av
+                        container = av.open(str(audio_path))
+                        stream = container.streams.audio[0]
+                        sr = stream.rate
+                        resampler = av.AudioResampler(format="fltp", layout="stereo", rate=sr)
+                        chunks = []
+                        for frame in container.decode(audio=0):
+                            frame.pts = None
+                            for resampled in resampler.resample(frame):
+                                chunks.append(resampled.to_ndarray())
+                        container.close()
+                        if not chunks:
+                            raise RuntimeError(f"No audio frames from {audio_path}")
+                        import numpy as np
+                        samples = np.concatenate(chunks, axis=1).T.astype(np.float32)
                     outputs["audio"] = (samples, sr)
                 except Exception as e:
                     logger.warning(f"Could not read audio file {audio_path}: {e}")

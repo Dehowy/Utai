@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.7.0-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.8.1-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -24,6 +24,8 @@
 </p>
 
 <p align="center">
+  <a href="https://utaisynthesizer.net"><img src="https://img.shields.io/badge/Website-utaisynthesizer.net-ff69b4?style=for-the-badge&logo=google-chrome&logoColor=white" alt="Website"></a>
+  &nbsp;
   <a href="https://discord.com/invite/nK4KSEWMPU"><img src="https://img.shields.io/badge/Discord-Join%20Server-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Discord"></a>
   &nbsp;
   <img src="https://img.shields.io/badge/QQ%20Group-1097227285-12B7F5?style=for-the-badge&logo=tencentqq&logoColor=white" alt="QQ Group">
@@ -546,5 +548,5 @@ Utai/
 
 <p align="center">
   <sub>基于 FastAPI、React Flow、PyTorch 构建，致敬复古 UI 设计</sub><br>
-  <sub>v1.7.0</sub>
+  <sub>v1.8.1</sub>
 </p>

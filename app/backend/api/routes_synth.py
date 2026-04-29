@@ -303,7 +303,23 @@ async def convert_audio(
     output_path = str(synth_output / f"rvc_output_{_safe_filename(file.filename)}")
 
     try:
-        audio_data, sr = sf.read(str(input_path))
+        try:
+            audio_data, sr = sf.read(str(input_path))
+        except Exception:
+            import av
+            container = av.open(str(input_path))
+            stream = container.streams.audio[0]
+            sr = stream.rate
+            resampler = av.AudioResampler(format="fltp", layout="mono", rate=sr)
+            chunks = []
+            for frame in container.decode(audio=0):
+                frame.pts = None
+                for resampled in resampler.resample(frame):
+                    chunks.append(resampled.to_ndarray().flatten())
+            container.close()
+            if not chunks:
+                raise RuntimeError(f"No audio frames decoded")
+            audio_data = np.concatenate(chunks)
         if audio_data.ndim > 1:
             audio_data = audio_data.mean(axis=1)
         audio_data = audio_data.astype(np.float32)

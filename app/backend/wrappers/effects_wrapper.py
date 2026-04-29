@@ -125,7 +125,11 @@ def apply_effects(
             audio = _apply_world_pitch(audio, sr, params)
         elif fx_type == "warp_pitch":
             audio = _apply_warp_pitch(audio, sr, params)
-        elif fx_type in ("compressor", "reverb", "filter", "delay", "panner"):
+        elif fx_type == "delay":
+            audio = _apply_delay(audio, sr, params)
+        elif fx_type == "reverb":
+            audio = _apply_reverb(audio, sr, params)
+        elif fx_type in ("compressor", "filter", "panner"):
             audio = _apply_dawdreamer_effect(audio, sr, fx_type, params)
         else:
             logger.warning(f"Unknown effect type: {fx_type}")
@@ -157,7 +161,11 @@ def apply_effects_to_buffer(
             audio = _apply_world_pitch(audio, sample_rate, params)
         elif fx_type == "warp_pitch":
             audio = _apply_warp_pitch(audio, sample_rate, params)
-        elif fx_type in ("compressor", "reverb", "filter", "delay", "panner"):
+        elif fx_type == "delay":
+            audio = _apply_delay(audio, sample_rate, params)
+        elif fx_type == "reverb":
+            audio = _apply_reverb(audio, sample_rate, params)
+        elif fx_type in ("compressor", "filter", "panner"):
             audio = _apply_dawdreamer_effect(audio, sample_rate, fx_type, params)
     return audio
 
@@ -254,10 +262,103 @@ def _apply_warp_pitch(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
     return result
 
 
+# ── Delay (pure numpy — dawdreamer's native delay segfaults on Windows) ──
+
+def _apply_delay(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
+    """Single-tap stereo delay with wet/dry mix."""
+    time_ms = float(params.get("time_ms", 250))
+    wet = float(params.get("wet", 0.3))
+
+    delay_samples = int(sr * time_ms / 1000)
+    if delay_samples <= 0 or wet <= 0:
+        return audio
+
+    n_ch, n_samples = audio.shape
+    out = np.empty_like(audio)
+    for ch in range(n_ch):
+        delayed = np.zeros(n_samples, dtype=audio.dtype)
+        if delay_samples < n_samples:
+            delayed[delay_samples:] = audio[ch, :n_samples - delay_samples]
+        out[ch] = audio[ch] * (1 - wet) + delayed * wet
+
+    return out
+
+
+# ── Reverb (Freeverb-style, pure scipy — dawdreamer reverb broken on Windows) ──
+
+_COMB_TUNINGS = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617]
+_AP_TUNINGS = [556, 441, 341, 225]
+_STEREO_SPREAD = 23
+
+def _apply_reverb(audio: np.ndarray, sr: int, params: dict) -> np.ndarray:
+    """Freeverb-style algorithmic reverb using scipy.signal.lfilter."""
+    from scipy.signal import lfilter
+
+    room_size = float(params.get("room_size", 0.5))
+    damping = float(params.get("damping", 0.5))
+    wet = float(params.get("wet", 0.3))
+    dry = float(params.get("dry", 0.7))
+    width = float(params.get("width", 1.0))
+
+    if wet <= 0:
+        return audio
+
+    feedback = room_size * 0.28 + 0.7
+    damp = damping * 0.4
+    scale = sr / 44100
+
+    n_ch, n_samples = audio.shape
+    mono_in = audio.mean(axis=0).astype(np.float32) if n_ch > 1 else audio[0].astype(np.float32)
+
+    wet_l = np.zeros(n_samples, dtype=np.float32)
+    wet_r = np.zeros(n_samples, dtype=np.float32)
+
+    for base_delay in _COMB_TUNINGS:
+        d_l = max(1, int(base_delay * scale))
+        d_r = max(1, int((base_delay + _STEREO_SPREAD) * scale))
+        fb = feedback * (1 - damp)
+        for d, acc in [(d_l, wet_l), (d_r, wet_r)]:
+            b = np.zeros(d + 1, dtype=np.float32)
+            b[d] = 1.0
+            a = np.zeros(d + 1, dtype=np.float32)
+            a[0] = 1.0
+            a[d] = -fb
+            acc += lfilter(b, a, mono_in)
+
+    wet_l /= len(_COMB_TUNINGS)
+    wet_r /= len(_COMB_TUNINGS)
+
+    for base_delay in _AP_TUNINGS:
+        d_l = max(1, int(base_delay * scale))
+        d_r = max(1, int((base_delay + _STEREO_SPREAD) * scale))
+        g = 0.5
+        for d, sig in [(d_l, wet_l), (d_r, wet_r)]:
+            b = np.zeros(d + 1, dtype=np.float32)
+            b[0] = -g
+            b[d] = 1.0
+            a = np.zeros(d + 1, dtype=np.float32)
+            a[0] = 1.0
+            a[d] = -g
+            sig[:] = lfilter(b, a, sig)
+
+    w1 = (1 + width) / 2
+    w2 = (1 - width) / 2
+
+    if n_ch >= 2:
+        out = np.empty_like(audio)
+        out[0] = audio[0] * dry + (wet_l * w1 + wet_r * w2) * wet
+        out[1] = audio[1] * dry + (wet_r * w1 + wet_l * w2) * wet
+    else:
+        out = np.empty_like(audio)
+        out[0] = audio[0] * dry + (wet_l + wet_r) * 0.5 * wet
+
+    return out
+
+
 # ── dawdreamer built-in effects ──
 
 def _apply_dawdreamer_effect(audio: np.ndarray, sr: int, fx_type: str, params: dict) -> np.ndarray:
-    """Apply a dawdreamer built-in effect (compressor, reverb, filter, delay, panner)."""
+    """Apply a dawdreamer built-in effect (compressor, filter, panner)."""
     import dawdreamer as daw
 
     engine = daw.RenderEngine(sample_rate=sr, block_size=512)
@@ -273,14 +374,6 @@ def _apply_dawdreamer_effect(audio: np.ndarray, sr: int, fx_type: str, params: d
             attack=float(params.get("attack", 5)),
             release=float(params.get("release", 100)),
         )
-    elif fx_type == "reverb":
-        fx = engine.make_reverb_processor("fx",
-            roomSize=float(params.get("room_size", 0.5)),
-            damping=float(params.get("damping", 0.5)),
-            wetLevel=float(params.get("wet", 0.3)),
-            dryLevel=float(params.get("dry", 0.7)),
-            width=float(params.get("width", 1.0)),
-        )
     elif fx_type == "filter":
         mode_idx = int(params.get("mode", 0))
         mode = FILTER_MODES.get(mode_idx, "low")
@@ -289,11 +382,6 @@ def _apply_dawdreamer_effect(audio: np.ndarray, sr: int, fx_type: str, params: d
             freq=float(params.get("frequency", 1000)),
             q=float(params.get("q", 0.707)),
             gain=float(params.get("gain", 1.0)),
-        )
-    elif fx_type == "delay":
-        fx = engine.make_delay_processor("fx",
-            delay=float(params.get("time_ms", 250)),
-            wet=float(params.get("wet", 0.3)),
         )
     elif fx_type == "panner":
         fx = engine.make_panner_processor("fx",
@@ -308,6 +396,6 @@ def _apply_dawdreamer_effect(audio: np.ndarray, sr: int, fx_type: str, params: d
         (fx, ["input"]),
     ])
 
-    duration = audio.shape[1] / sr + 0.5  # extra for reverb/delay tail
+    duration = audio.shape[1] / sr + 0.5
     engine.render(duration)
     return engine.get_audio()

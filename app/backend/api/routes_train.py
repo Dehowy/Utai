@@ -196,8 +196,25 @@ async def _run_batch_separation(task_id: str, req: BatchSeparateRequest):
                 "progress": i / total * 100,
             })
 
-            # Load audio
-            audio, sr = sf.read(str(fp), dtype="float32")
+            # Load audio (soundfile for wav/flac, PyAV fallback for m4a/mp3/aac)
+            try:
+                audio, sr = sf.read(str(fp), dtype="float32")
+            except Exception:
+                import av
+                container = av.open(str(fp))
+                stream = container.streams.audio[0]
+                target_sr = stream.rate
+                resampler = av.AudioResampler(format="fltp", layout="stereo", rate=target_sr)
+                chunks = []
+                for frame in container.decode(audio=0):
+                    frame.pts = None
+                    for resampled in resampler.resample(frame):
+                        chunks.append(resampled.to_ndarray())
+                container.close()
+                if not chunks:
+                    raise RuntimeError(f"No audio frames decoded from {fp.name}")
+                audio = np.concatenate(chunks, axis=1).T  # (channels, samples) -> (samples, channels)
+                sr = target_sr
 
             # Run separation
             if is_vr:

@@ -1,6 +1,6 @@
 {
   "name": "utai",
-  "version": "1.7.0",
+  "version": "1.8.1",
   "description": "AI Voice Conversion Workstation",
   "main": "main.js",
   "scripts": {

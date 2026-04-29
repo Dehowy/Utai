@@ -631,7 +631,7 @@ function TrainFlow() {
             />
           )}
 
-          <div className="utai-counter">★ utai v1.7.0 — training</div>
+          <div className="utai-counter">★ utai v1.8.1 — training</div>
         </div>
 
         {/* Log panel (right) */}

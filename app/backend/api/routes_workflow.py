@@ -94,7 +94,24 @@ def _convert_ytdlp_nodes_for_export(workflow: Workflow) -> Workflow:
             if audio_file:
                 try:
                     import soundfile as sf
-                    samples, sr = sf.read(str(audio_file), dtype="float32")
+                    try:
+                        samples, sr = sf.read(str(audio_file), dtype="float32")
+                    except Exception:
+                        import av
+                        container = av.open(str(audio_file))
+                        stream = container.streams.audio[0]
+                        sr = stream.rate
+                        resampler = av.AudioResampler(format="fltp", layout="stereo", rate=sr)
+                        chunks = []
+                        for frame in container.decode(audio=0):
+                            frame.pts = None
+                            for resampled in resampler.resample(frame):
+                                chunks.append(resampled.to_ndarray())
+                        container.close()
+                        if not chunks:
+                            raise RuntimeError(f"No audio frames from {audio_file.name}")
+                        import numpy as np
+                        samples = np.concatenate(chunks, axis=1).T.astype(np.float32)
                     audio = AudioData(samples=samples, sample_rate=sr, name=audio_file.name)
                     new_bid = buffer_manager.store(audio)
                     new_params = {

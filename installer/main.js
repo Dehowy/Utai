@@ -290,6 +290,13 @@ ipcMain.handle('start-install', (_, config) => {
       await copyDir(appSrc, path.join(installPath, 'app'));
       log('  app/ copied');
 
+      // ── 3b. Copy ffmpeg ──
+      const binSrc = path.join(bundlePath, 'bin');
+      if (fs.existsSync(binSrc)) {
+        await copyDir(binSrc, path.join(installPath, 'bin'));
+        log('  bin/ffmpeg copied');
+      }
+
       // ── 4. Copy synth components (if selected) ──
       if (components.synth) {
         stage(14, 'Copying synth model...');

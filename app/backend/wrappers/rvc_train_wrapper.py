@@ -554,40 +554,38 @@ class RVCTrainWrapper:
         output_dir: str | None = None,
         log_callback: Callable | None = None,
     ) -> str | None:
-        """Export the trained model weights to assets/weights/ (and optionally a custom dir)."""
+        """Export the trained model weights to assets/weights/ (and optionally a custom dir).
+
+        train.py's savee() already writes all weights directly to assets/weights/:
+          - Final model: {exp_name}.pth
+          - Checkpoints: {exp_name}_e{epoch}_s{step}.pth
+        So this function just logs what's there, copies to output_dir if needed,
+        and exports the FAISS index.
+        """
         exp_dir = EXPERIMENTS_DIR / exp_name
         weights_dir = Path(self._rvc_root) / "assets" / "weights"
         weights_dir.mkdir(parents=True, exist_ok=True)
 
-        # Find the latest saved weight file
-        weight_files = sorted(exp_dir.glob(f"{exp_name}_*.pth"))
-        if not weight_files:
-            # Try weights directory itself
-            weight_files = sorted(weights_dir.glob(f"{exp_name}*.pth"))
+        all_weights = sorted(weights_dir.glob(f"{exp_name}*.pth"))
+        all_weights = [w for w in all_weights if w.suffix == ".pth"]
 
-        if not weight_files:
+        if not all_weights:
             if log_callback:
                 await log_callback(f"[export] No weight files found for {exp_name}")
             return None
 
-        latest = weight_files[-1]
-        dest = weights_dir / f"{exp_name}.pth"
-
-        if latest != dest:
-            shutil.copy2(str(latest), str(dest))
-
         if log_callback:
-            await log_callback(f"[export] Model exported to {dest}")
+            await log_callback(f"[export] {len(all_weights)} model(s) available:")
+            for w in all_weights:
+                await log_callback(f"[export]   {w.name}")
 
-        # Copy to custom output dir if specified
         if output_dir:
-            custom_dest = Path(output_dir) / f"{exp_name}.pth"
             os.makedirs(output_dir, exist_ok=True)
-            shutil.copy2(str(latest), str(custom_dest))
+            for w in all_weights:
+                shutil.copy2(str(w), str(Path(output_dir) / w.name))
             if log_callback:
-                await log_callback(f"[export] Also copied to {custom_dest}")
+                await log_callback(f"[export] All models copied to {output_dir}")
 
-        # Copy index file too
         index_files = list(exp_dir.glob("added_*.index"))
         if index_files:
             idx_src = index_files[-1]
@@ -596,8 +594,13 @@ class RVCTrainWrapper:
             shutil.copy2(str(idx_src), str(idx_dest))
             if log_callback:
                 await log_callback(f"[export] Index exported to {idx_dest}")
+            if output_dir:
+                shutil.copy2(str(idx_src), str(Path(output_dir) / idx_src.name))
+                if log_callback:
+                    await log_callback(f"[export] Index copied to {output_dir}")
 
-        return str(dest)
+        final = weights_dir / f"{exp_name}.pth"
+        return str(final) if final.exists() else str(all_weights[0])
 
     async def _run_subprocess(
         self,
