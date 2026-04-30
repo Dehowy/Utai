@@ -549,7 +549,7 @@ function Flow() {
 
           {/* Retro visitor counter easter egg */}
           <div className="utai-counter">
-            ★ utai v1.8.1
+            ★ utai v1.8.2
           </div>
         </div>
         <WorkflowLogPanel />

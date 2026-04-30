@@ -679,17 +679,27 @@ ipcMain.handle('start-install', (_, config) => {
         : gpu === 'cpu' ? 'requirements-torch-cpu.txt' : 'requirements-torch-cu121.txt';
       const torchIndex = gpu === 'cpu' ? 'https://download.pytorch.org/whl/cpu'
         : gpu === 'cu128' ? 'https://download.pytorch.org/whl/cu128' : 'https://download.pytorch.org/whl/cu121';
-      const actualIndex = mirrors.pytorch ? `${mirrors.pytorch}/${gpu === 'cpu' ? 'cpu' : gpu}` : torchIndex;
-      // --index-url = torch wheel source; --extra-index-url = PyPI for sub-deps (sympy etc.)
       const torchArgs = ['-m', 'pip', 'install', '--no-warn-script-location', '--no-cache-dir',
-        '-r', path.join(installPath, torchReq),
-        '--index-url', actualIndex];
-      if (mirrors.pypi) {
-        try {
-          torchArgs.push('--extra-index-url', mirrors.pypi, '--trusted-host', new URL(mirrors.pypi).hostname);
-        } catch { torchArgs.push('--extra-index-url', mirrors.pypi); }
+        '-r', path.join(installPath, torchReq)];
+      if (mirrors.pytorch) {
+        // Chinese mirrors (e.g. Aliyun) use flat directory listings, not PEP 503 indexes.
+        // --find-links scans <a href="*.whl"> on the page; --index-url handles sub-deps via PyPI.
+        const mirrorUrl = `${mirrors.pytorch}/${gpu === 'cpu' ? 'cpu' : gpu}/`;
+        torchArgs.push('--find-links', mirrorUrl);
+        const pypiUrl = mirrors.pypi || 'https://pypi.org/simple';
+        torchArgs.push('--index-url', pypiUrl);
+        if (mirrors.pypi) {
+          try { torchArgs.push('--trusted-host', new URL(mirrors.pypi).hostname); } catch {}
+        }
       } else {
-        torchArgs.push('--extra-index-url', 'https://pypi.org/simple');
+        torchArgs.push('--index-url', torchIndex);
+        if (mirrors.pypi) {
+          try {
+            torchArgs.push('--extra-index-url', mirrors.pypi, '--trusted-host', new URL(mirrors.pypi).hostname);
+          } catch { torchArgs.push('--extra-index-url', mirrors.pypi); }
+        } else {
+          torchArgs.push('--extra-index-url', 'https://pypi.org/simple');
+        }
       }
 
       torchArgs.push('--constraint', constraintsFile);

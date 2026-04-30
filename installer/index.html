@@ -24,7 +24,7 @@
         <img src="icon.png" class="welcome-icon" alt="">
         <div class="logo-large">「utai」</div>
         <div class="subtitle" data-i18n="welcome.subtitle">AI Audio Workflow + Synthesizer</div>
-        <div class="version">v1.8.1</div>
+        <div class="version">v1.8.2</div>
         <div class="lang-select">
           <button class="lang-btn" onclick="setLang('zh',this)">中文</button>
           <button class="lang-btn active" onclick="setLang('en',this)">English</button>
@@ -69,7 +69,7 @@
         <label>PyTorch</label>
         <div class="preset-row">
           <button class="preset active" onclick="setMirror('pytorch','',this)" data-i18n="mirror.default">Default</button>
-          <button class="preset" onclick="setMirror('pytorch','https://mirror.sjtu.edu.cn/pytorch-wheels',this)" data-i18n="mirror.sjtu">SJTU</button>
+          <button class="preset" onclick="setMirror('pytorch','https://mirrors.aliyun.com/pytorch-wheels',this)" data-i18n="mirror.aliyun">Aliyun</button>
         </div>
         <input id="mirror-pytorch" placeholder="Custom URL" oninput="mirrors.pytorch=this.value;updateNetworkNext()">
       </div>
