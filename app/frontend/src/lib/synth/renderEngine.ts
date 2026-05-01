@@ -43,6 +43,7 @@ export function getTrackFingerprint(trackIdx: number): string {
     return JSON.stringify({
       p: parts.map(p => ({ pos: p.position, n: p.notes })),
       plug: track.plugin_name,
+      vstVer: s.vstStateVersion[trackIdx] || 0,
     });
   }
   return '';

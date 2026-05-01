@@ -13,6 +13,8 @@ export default function VSTPluginSelector() {
   const setTrackPlugin = useSynthStore(s => s.setTrackPlugin);
   const [plugins, setPlugins] = useState<any[]>([]);
   const [editorOpen, setEditorOpen] = useState(false);
+  const prevEditorOpen = useRef(false);
+  const bumpVstStateVersion = useSynthStore(s => s.bumpVstStateVersion);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const instPart = activeInstIdx >= 0 ? project.instrument_parts[activeInstIdx] : null;
@@ -33,6 +35,13 @@ export default function VSTPluginSelector() {
   }, [track?.plugin_name]);
 
   useEffect(() => { checkStatus(); }, [track?.plugin_name]);
+
+  useEffect(() => {
+    if (prevEditorOpen.current && !editorOpen && trackNo >= 0) {
+      bumpVstStateVersion(trackNo);
+    }
+    prevEditorOpen.current = editorOpen;
+  }, [editorOpen, trackNo, bumpVstStateVersion]);
 
   useEffect(() => {
     if (!editorOpen || !track?.plugin_name) {

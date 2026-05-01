@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.8.2-7b68ee?style=flat-square" alt="version">
+  <img src="https://img.shields.io/badge/version-1.8.3-7b68ee?style=flat-square" alt="version">
   <img src="https://img.shields.io/badge/platform-Windows-0078d4?style=flat-square" alt="platform">
   <img src="https://img.shields.io/badge/GPU-NVIDIA%2030%2F40%2F50-76b900?style=flat-square" alt="gpu">
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license">
@@ -548,5 +548,5 @@ Utai/
 
 <p align="center">
   <sub>FastAPI、React Flow、PyTorch で構築 — レトロ UI デザインへの愛を込めて</sub><br>
-  <sub>v1.8.2</sub>
+  <sub>v1.8.3</sub>
 </p>

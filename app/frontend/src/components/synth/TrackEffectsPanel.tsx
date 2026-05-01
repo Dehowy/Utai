@@ -47,30 +47,37 @@ export default function TrackEffectsPanel() {
     if (selectedSegment) {
       if (selectedSegment.type === 'voice') setScopeFilter(`v${selectedSegment.index}`);
       else if (selectedSegment.type === 'wave') setScopeFilter(`w${selectedSegment.index}`);
-      else setScopeFilter('all');
+      else if (selectedSegment.type === 'instrument') setScopeFilter(`i${selectedSegment.index}`);
+      else setScopeFilter('track');
     } else if (viewMode === 'arrangement') {
       setScopeFilter('track');
     }
   }, [selectedSegment, viewMode]);
 
-  // Auto-sync when entering audio editor via double-click
+  // Auto-sync when entering audio/instrument editor via double-click
   useEffect(() => {
     if (activeWaveIdx >= 0) setScopeFilter(`w${activeWaveIdx}`);
   }, [activeWaveIdx]);
+  useEffect(() => {
+    if (activeInstIdx >= 0) setScopeFilter(`i${activeInstIdx}`);
+  }, [activeInstIdx]);
 
   const allEffects = trackEffects[trackIdx] || [];
   const track = project.tracks[trackIdx];
   const setTrackVolume = useSynthStore(s => s.setTrackVolume);
   const setTrackPan = useSynthStore(s => s.setTrackPan);
 
-  // Parts on this track (for clip scope options) — voice + wave parts
+  // Parts on this track (for clip scope options) — voice + wave + instrument parts
   const voicePartsOnTrack = project.voice_parts
     .map((vp, i) => ({ name: vp.name, _key: `v${i}`, _label: vp.name || `Clip ${i + 1}` }))
     .filter((_, i) => project.voice_parts[i].track_no === trackIdx);
   const wavePartsOnTrack = project.wave_parts
     .map((wp, i) => ({ name: wp.name, _key: `w${i}`, _label: wp.name || `Audio ${i + 1}` }))
     .filter((_, i) => project.wave_parts[i].track_no === trackIdx);
-  const partsOnTrack = [...voicePartsOnTrack, ...wavePartsOnTrack];
+  const instPartsOnTrack = project.instrument_parts
+    .map((ip, i) => ({ name: ip.name, _key: `i${i}`, _label: ip.name || `Part ${i + 1}` }))
+    .filter((_, i) => project.instrument_parts[i].track_no === trackIdx);
+  const partsOnTrack = [...voicePartsOnTrack, ...wavePartsOnTrack, ...instPartsOnTrack];
 
   // Match scope: support legacy number (voice idx), 'v0', 'w0' string keys
   const matchScope = (fxScope: 'track' | number | string | undefined, filter: string): boolean => {
@@ -231,7 +238,9 @@ export default function TrackEffectsPanel() {
             ? (project.wave_parts[parseInt(fx.scope.slice(1))]?.name || `A${parseInt(fx.scope.slice(1)) + 1}`)
             : typeof fx.scope === 'string' && fx.scope.startsWith('v')
               ? (project.voice_parts[parseInt(fx.scope.slice(1))]?.name || `C${parseInt(fx.scope.slice(1)) + 1}`)
-              : 'T';
+              : typeof fx.scope === 'string' && fx.scope.startsWith('i')
+                ? (project.instrument_parts[parseInt(fx.scope.slice(1))]?.name || `P${parseInt(fx.scope.slice(1)) + 1}`)
+                : 'T';
         const scopeLabel = rawScopeLabel.length > 6 ? rawScopeLabel.slice(0, 5) + '…' : rawScopeLabel;
         return (
           <div key={fxIdx} style={{

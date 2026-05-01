@@ -399,8 +399,23 @@ def is_editor_open(name: str) -> bool:
 def _apply_state_if_exists(name: str, plugin):
     """Load saved editor state into a plugin if the state file exists."""
     state_path = VST_INSTRUMENTS_DIR / name / "state.bin"
-    if state_path.exists():
-        try:
+    if not state_path.exists():
+        return
+    try:
+        raw = state_path.read_bytes()
+        if raw.startswith(b'CcnK'):
             plugin.load_state(str(state_path))
-        except Exception:
-            pass
+            return
+        if raw.startswith(b'UTV2'):
+            raw = raw[4:]
+        import struct
+        fxb = struct.pack('>4sI4sI4sII128sI',
+            b'CcnK', 0, b'FBCh', 1,
+            b'\x00\x00\x00\x00', 0, 1, b'\x00' * 128, len(raw),
+        ) + raw
+        tmp = state_path.with_suffix('.fxb')
+        tmp.write_bytes(fxb)
+        plugin.load_state(str(tmp))
+        tmp.unlink(missing_ok=True)
+    except Exception:
+        pass

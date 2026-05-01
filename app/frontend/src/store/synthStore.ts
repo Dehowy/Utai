@@ -99,6 +99,7 @@ interface SynthState {
   peakData: Record<string, Float32Array>;  // buffer_id → peak array
   trackEffects: Record<number, TrackEffect[]>;  // trackIndex → effect chain
   trackRenderedSnapshot: Record<number, string>;  // trackIndex → fingerprint at render time
+  vstStateVersion: Record<number, number>;  // trackIndex → bumped when VST editor saves state
 
   // Project persistence
   projectPath: string | null;
@@ -226,6 +227,7 @@ interface SynthState {
 
   // Render snapshots
   setTrackRenderedSnapshot: (trackIndex: number, snapshot: string) => void;
+  bumpVstStateVersion: (trackIndex: number) => void;
 
   // Actions - Undo/Redo
   undo: () => void;
@@ -320,6 +322,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   peakData: {},
   trackEffects: {},
   trackRenderedSnapshot: {},
+  vstStateVersion: {},
   projectPath: null,
   isSaving: false,
   setProjectPath: (path) => set({ projectPath: path }),
@@ -369,6 +372,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       peakData: {},
       trackEffects: {},
       trackRenderedSnapshot: {},
+      vstStateVersion: {},
       trackRvcModel: {},
       trackLanguage,
       trackIndexRate: {},
@@ -417,6 +421,7 @@ export const useSynthStore = create<SynthState>((set, get) => ({
       peakData: {},
       trackEffects: {},
       trackRenderedSnapshot: {},
+      vstStateVersion: {},
       rvcModel: '',
       trackRvcModel: {},
       trackLanguage: {},
@@ -1305,6 +1310,9 @@ export const useSynthStore = create<SynthState>((set, get) => ({
   // Render snapshots
   setTrackRenderedSnapshot: (trackIndex, snapshot) => set((state) => ({
     trackRenderedSnapshot: { ...state.trackRenderedSnapshot, [trackIndex]: snapshot },
+  })),
+  bumpVstStateVersion: (trackIndex) => set((state) => ({
+    vstStateVersion: { ...state.vstStateVersion, [trackIndex]: (state.vstStateVersion[trackIndex] || 0) + 1 },
   })),
 
   // Undo/Redo
