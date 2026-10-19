@@ -326,14 +326,14 @@ ipcMain.handle('start-install', (_, config) => {
         const ghMirror = mirrors.github || '';
         const hasGit = (() => { try { execSync('git --version', { stdio: 'ignore', timeout: 5000 }); return true; } catch { return false; } })();
 
-        const download = async (repoOwner, repoName, dest, label) => {
+        const download = async (repoOwner, repoName, dest, label, ref = 'main') => {
           if (fs.existsSync(dest)) { log(`  ${label} already exists, skipping`); return; }
           if (hasGit) {
             log(`  Cloning ${label} via git...`);
             const gitUrl = ghMirror
               ? `${ghMirror}/https://github.com/${repoOwner}/${repoName}.git`
               : `https://github.com/${repoOwner}/${repoName}.git`;
-            const proc = trackedSpawn('git', ['clone', '--depth', '1', gitUrl, dest]);
+            const proc = trackedSpawn('git', ['clone', '--depth', '1', '--branch', ref, gitUrl, dest]);
             proc.stdout.on('data', d => log('  ' + d.toString().trim()));
             proc.stderr.on('data', d => log('  ' + d.toString().trim()));
             const code = await new Promise(resolve => proc.on('close', resolve));
@@ -342,8 +342,8 @@ ipcMain.handle('start-install', (_, config) => {
           }
           log(`  Downloading ${label} as zip...`);
           const zipUrl = ghMirror
-            ? `${ghMirror}/https://github.com/${repoOwner}/${repoName}/archive/refs/heads/main.zip`
-            : `https://github.com/${repoOwner}/${repoName}/archive/refs/heads/main.zip`;
+            ? `${ghMirror}/https://github.com/${repoOwner}/${repoName}/archive/refs/heads/${ref}.zip`
+            : `https://github.com/${repoOwner}/${repoName}/archive/refs/heads/${ref}.zip`;
           const https = require('https');
           const http = require('http');
           const parentDir = path.dirname(dest);
@@ -371,7 +371,7 @@ ipcMain.handle('start-install', (_, config) => {
             const psZip = zipPath.replace(/'/g, "''");
             const psOut = parentDir.replace(/'/g, "''");
             execSync(`C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath '${psZip}' -DestinationPath '${psOut}' -Force"`, { timeout: 300000 });
-            const extracted = path.join(parentDir, `${repoName}-main`);
+            const extracted = path.join(parentDir, `${repoName}-${ref}`);
             if (fs.existsSync(extracted)) {
               if (fs.existsSync(dest)) fs.rmSync(dest, { recursive: true, force: true });
               fs.renameSync(extracted, dest);
@@ -438,7 +438,7 @@ ipcMain.handle('start-install', (_, config) => {
         }
 
         stage(25, 'Downloading voice conversion (RVC)...');
-        await download('RVC-Project', 'Retrieval-based-Voice-Conversion-WebUI', path.join(installPath, 'RVC', 'RVC20240604Nvidia'), 'RVC');
+        await download('RVC-Project', 'Retrieval-based-Voice-Conversion-WebUI', path.join(installPath, 'RVC', 'RVC20240604Nvidia'), 'RVC', '20240604');
 
         // Download RVC model files (not included in git repo)
         const hfMirror = mirrors.huggingface || '';
