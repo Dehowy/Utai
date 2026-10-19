@@ -24,6 +24,14 @@ import soundfile as sf
 import torch
 import torch.nn.functional as F
 
+from fairseq.data.dictionary import Dictionary
+
+# PyTorch >= 2.6 defaults torch.load() to weights_only=True; fairseq 0.12.2
+# does not pass weights_only, so allowlist the one class needed by
+# assets/hubert/hubert_base.pt (no-op on torch < 2.6).
+if hasattr(torch.serialization, "add_safe_globals"):
+    torch.serialization.add_safe_globals([Dictionary])
+
 if "privateuseone" not in device:
     device = "cpu"
     if torch.cuda.is_available():

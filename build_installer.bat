@@ -84,15 +84,18 @@ if exist "RVC\RVC20240604Nvidia\infer\lib\audio.py" (
     rd /s /q "installer\bundle\rvc-patches" 2>nul
     mkdir "installer\bundle\rvc-patches\infer\lib\train" 2>nul
     mkdir "installer\bundle\rvc-patches\infer\modules\train" 2>nul
+    mkdir "installer\bundle\rvc-patches\infer\modules\vc" 2>nul
     mkdir "installer\bundle\rvc-patches\configs\v1" 2>nul
     mkdir "installer\bundle\rvc-patches\configs\v2" 2>nul
     copy /y "RVC\RVC20240604Nvidia\infer\lib\audio.py" "installer\bundle\rvc-patches\infer\lib\audio.py" >nul
     copy /y "RVC\RVC20240604Nvidia\infer\lib\train\process_ckpt.py" "installer\bundle\rvc-patches\infer\lib\train\process_ckpt.py" >nul
     copy /y "RVC\RVC20240604Nvidia\infer\lib\train\utils.py" "installer\bundle\rvc-patches\infer\lib\train\utils.py" >nul
     copy /y "RVC\RVC20240604Nvidia\infer\modules\train\train.py" "installer\bundle\rvc-patches\infer\modules\train\train.py" >nul
+    copy /y "RVC\RVC20240604Nvidia\infer\modules\vc\utils.py" "installer\bundle\rvc-patches\infer\modules\vc\utils.py" >nul
+    copy /y "RVC\RVC20240604Nvidia\infer\modules\train\extract_feature_print.py" "installer\bundle\rvc-patches\infer\modules\train\extract_feature_print.py" >nul
     xcopy /e /q /y "RVC\RVC20240604Nvidia\configs\v1\*" "installer\bundle\rvc-patches\configs\v1\" >nul
     xcopy /e /q /y "RVC\RVC20240604Nvidia\configs\v2\*" "installer\bundle\rvc-patches\configs\v2\" >nul
-    echo   rvc-patches synced (audio, process_ckpt, train, utils, configs)
+    echo   rvc-patches synced (audio, process_ckpt, train, utils, configs, vc/utils, extract_feature_print)
 )
 
 :: Sync VST host (needed for VST3 plugin editor — e.g. Dexed)
